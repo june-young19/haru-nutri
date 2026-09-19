@@ -2,7 +2,11 @@
 
 이 문서는 동일한 GitHub 저장소에서 **웹 서비스 1개 + 상시 알림 워커 1개**를 배포하는 절차입니다. SQLite는 웹 서비스의 영구 볼륨에만 저장합니다. 워커는 인증된 HTTP 요청으로 웹 서버의 알림 처리를 호출하므로 별도 DB나 공유 파일 시스템이 필요하지 않습니다.
 
-여기에 실제로 발급되지 않은 서비스 주소를 기록하지 않습니다. 아래 `<실제 HTTPS 도메인>`은 배포 화면에서 생성한 주소로 바꿉니다. 이 가이드와 로컬 테스트의 성공만으로 외부 배포가 완료된 것은 아닙니다.
+**실제 공개 서비스:** [하루영양 열기](https://haru-nutri-production.up.railway.app) · [GitHub 저장소](https://github.com/june-young19/haru-nutri) · [성공한 CI](https://github.com/june-young19/haru-nutri/actions/runs/35424692457)
+
+2026-09-19 Railway 웹 `haru-nutri`와 워커 `haru-reminders`의 ONLINE 상태, 클라우드 Docker 빌드·실행, `/app/data`의 500MB 영구 볼륨 연결을 확인했습니다. 공개 HTTPS에서 가입·등록·합산·복용 완료·삭제 이력·계정 분리·로그아웃 검증과 모바일 화면 점검을 완료했습니다. 웹을 실제 재시작한 후 기존 세션·프로필·제품·복용 이력이 유지되는 것도 확인했습니다. `resend` 모드 워커가 실제 자동 알림 1통을 발송했고 공급자 `Sent`·`Delivered`, Gmail 서버 수락, 다음 주기의 중복 발송 방지를 확인했습니다. **사용자 본인도 Gmail 전체 검색으로 해당 메일의 실제 수신을 확인했습니다.** 분류된 폴더는 확인하지 않았습니다. 상세 결과는 [검증 기록](VERIFICATION.md)에 있습니다.
+
+아래 절차로 본인 환경에 새로 배포할 수 있습니다. `<실제 HTTPS 도메인>` 자리에는 해당 배포에서 생성한 주소를 넣습니다. 현재 운영 서비스의 주소는 `https://haru-nutri-production.up.railway.app`입니다. 현재 Resend 테스트 발신자는 계정 본인 이메일로만 전송할 수 있으며, 다른 사용자·보호자에게 실제 발송하려면 발신 도메인 검증이 필요합니다.
 
 ## 1. 배포 대상 선택
 
@@ -28,13 +32,13 @@ Railway는 기존 `railway.json` / `railway.toml` 방식인 Config as Code를 �
 
 1. 프로젝트 루트에 `package.json`, `pnpm-lock.yaml`, `Dockerfile`이 있는 GitHub 저장소를 준비합니다. `.env`, SQLite DB, 백업은 업로드하지 않습니다.
 2. Railway에 GitHub로 로그인한 뒤 새 프로젝트를 생성합니다. GitHub 연결 권한은 해당 저장소에만 부여해도 됩니다.
-3. 같은 저장소를 연결한 서비스 두 개를 만들고 구분하기 쉬운 이름을 지정합니다. 이 문서에서는 `haru-web`, `haru-reminders`를 예시 이름으로 사용합니다.
+3. 같은 저장소를 연결한 서비스 두 개를 만들고 구분하기 쉬운 이름을 지정합니다. 현재 배포는 `haru-nutri`, `haru-reminders`를 사용합니다.
 4. 서비스 Root Directory는 이 프로젝트 루트로 지정합니다. 저장소 전체가 하루영양이면 `/`입니다. 상위 저장소의 하위 폴더에 넣었다면 `Dockerfile`이 있는 폴더를 지정합니다.
 5. 빌더를 Dockerfile로 선택하고 파일 위치를 `Dockerfile`로 지정합니다. Dockerfile에서 의존성을 설치하고 Next.js standalone 결과물을 빌드합니다. 별도 Build Command와 Pre-deploy Command는 비워 둡니다.
 
 ## 4. 두 서비스의 실행 설정
 
-| 설정                | 웹: `haru-web`                                   | 워커: `haru-reminders`                           |
+| 설정                | 웹: `haru-nutri`                                 | 워커: `haru-reminders`                           |
 | ------------------- | ------------------------------------------------ | ------------------------------------------------ |
 | GitHub 소스         | 이 저장소 / 선택한 배포 브랜치                   | 동일한 저장소 / 동일한 브랜치                    |
 | Builder             | Dockerfile                                       | Dockerfile                                       |

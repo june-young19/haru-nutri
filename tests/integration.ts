@@ -116,7 +116,11 @@ async function assertPage(path: string, status: number, cookie = ""): Promise<vo
     assert.equal(new URL(response.headers.get("location")!, baseUrl).pathname, "/login");
     assert.match(response.headers.get("cache-control") ?? "", /no-store|no-cache/i);
   } else {
-    assert.equal(response.headers.has("location"), false, `GET ${path} must not hide errors as a login redirect`);
+    assert.equal(
+      response.headers.has("location"),
+      false,
+      `GET ${path} must not hide errors as a login redirect`,
+    );
   }
 }
 
@@ -165,7 +169,18 @@ async function suite(databasePath: string): Promise<void> {
   const suffix = randomUUID();
   const email = `first-${suffix}@example.com`;
   const secondEmail = `second-${suffix}@example.com`;
-  const protectedPages = ["/onboarding", "/survey", "/survey/results", "/dashboard", "/supplements", "/supplements/new", "/duplicates", "/history", "/settings", "/settings/guardian"];
+  const protectedPages = [
+    "/onboarding",
+    "/survey",
+    "/survey/results",
+    "/dashboard",
+    "/supplements",
+    "/supplements/new",
+    "/duplicates",
+    "/history",
+    "/settings",
+    "/settings/guardian",
+  ];
   for (const path of ["/", "/login", "/signup"]) await assertPage(path, 200);
   for (const path of protectedPages) await assertPage(path, 307);
   await anonymous.request("/dashboard", { status: 401 });
@@ -514,7 +529,12 @@ async function suite(databasePath: string): Promise<void> {
   assert.equal(preferences.guardianEmail, "guardian@example.com");
   const secondPreferences = await second.request<Settings>("/settings", {
     method: "PATCH",
-    body: { userId: signup.user.id, guardianEmail: "second-guardian@example.com", guardianEnabled: true, guardianConsent: true },
+    body: {
+      userId: signup.user.id,
+      guardianEmail: "second-guardian@example.com",
+      guardianEnabled: true,
+      guardianConsent: true,
+    },
   });
   assert.equal(secondPreferences.guardianEmail, "second-guardian@example.com");
   assert.equal((await first.request<Settings>("/settings")).guardianEmail, "guardian@example.com");
@@ -614,18 +634,24 @@ async function suite(databasePath: string): Promise<void> {
   assert.equal((await first.request<{ user: User }>("/me")).user.name, "통합 테스트");
   const writableDatabase = new DatabaseSync(databasePath);
   try {
-    writableDatabase.prepare("UPDATE sessions SET expires_at=? WHERE user_id=?").run("2000-01-01T00:00:00.000Z", otherUser.user.id);
+    writableDatabase
+      .prepare("UPDATE sessions SET expires_at=? WHERE user_id=?")
+      .run("2000-01-01T00:00:00.000Z", otherUser.user.id);
     await second.request("/settings", { status: 401 });
     await assertPage("/settings/guardian", 307, second.cookie);
     await assertPage("/dashboard", 200, first.cookie);
     // Only this test's temporary database is altered. Storage failures must be
     // observable server errors, never mistaken for an expired login.
-    writableDatabase.exec("ALTER TABLE sessions RENAME COLUMN token_hash TO unavailable_token_hash");
+    writableDatabase.exec(
+      "ALTER TABLE sessions RENAME COLUMN token_hash TO unavailable_token_hash",
+    );
     try {
       await assertPage("/settings", 500, first.cookie);
       await first.request("/me", { status: 500 });
     } finally {
-      writableDatabase.exec("ALTER TABLE sessions RENAME COLUMN unavailable_token_hash TO token_hash");
+      writableDatabase.exec(
+        "ALTER TABLE sessions RENAME COLUMN unavailable_token_hash TO token_hash",
+      );
     }
     await assertPage("/settings", 200, first.cookie);
   } finally {
@@ -633,7 +659,8 @@ async function suite(databasePath: string): Promise<void> {
   }
   const finalCookie = first.cookie;
   await first.request("/auth/logout", { method: "POST", body: {} });
-  for (const path of ["/dashboard", "/settings", "/settings/guardian"]) await assertPage(path, 307, finalCookie);
+  for (const path of ["/dashboard", "/settings", "/settings/guardian"])
+    await assertPage(path, 307, finalCookie);
   await second.request("/auth/logout", { method: "POST", body: {} });
   console.log(
     "PASS deletion persistence, server-side page authorization, expired/logout sessions, guardian isolation and database failures that remain server errors",

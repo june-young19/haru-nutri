@@ -8,7 +8,8 @@ export const dynamic = "force-dynamic";
 
 export default async function Page({ params }: { params: Promise<{ slug?: string[] }> }) {
   const slug = (await params).slug ?? [];
-  const isPublic = slug.length === 0 || (slug.length === 1 && ["login", "signup"].includes(slug[0]));
+  const isPublic =
+    slug.length === 0 || (slug.length === 1 && ["login", "signup"].includes(slug[0]));
   if (!isPublic) {
     const cookieStore = await cookies();
     const user = getSessionUser(cookieStore.get(SESSION_COOKIE)?.value);

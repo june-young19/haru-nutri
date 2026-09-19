@@ -1140,12 +1140,34 @@ test("logout and expiry invalidate every private API while another account's ses
   assert.equal(loggedOut.response.status, 200);
   assert.match(loggedOut.response.headers.get("set-cookie")!, /Max-Age=0/);
   assert.equal(getSessionUser(token), null);
-  for (const path of ["/me", "/dashboard", "/supplements", "/history", "/settings", "/notifications", "/onboarding", "/safety"])
+  for (const path of [
+    "/me",
+    "/dashboard",
+    "/supplements",
+    "/history",
+    "/settings",
+    "/notifications",
+    "/onboarding",
+    "/safety",
+  ])
     assert.equal((await api(path, { cookie: first.cookie })).response.status, 401, path);
-  for (const [path, method] of [["/settings", "PATCH"], ["/onboarding", "POST"], ["/supplements", "POST"], ["/safety/preview", "POST"], ["/intakes", "PUT"], ["/notifications/preview", "POST"]])
-    assert.equal((await api(path, { method, cookie: first.cookie, body: {} })).response.status, 401, path);
+  for (const [path, method] of [
+    ["/settings", "PATCH"],
+    ["/onboarding", "POST"],
+    ["/supplements", "POST"],
+    ["/safety/preview", "POST"],
+    ["/intakes", "PUT"],
+    ["/notifications/preview", "POST"],
+  ])
+    assert.equal(
+      (await api(path, { method, cookie: first.cookie, body: {} })).response.status,
+      401,
+      path,
+    );
   assert.equal((await api("/me", { cookie: second.cookie })).response.status, 200);
-  getDb().prepare("UPDATE sessions SET expires_at=? WHERE user_id=?").run("2000-01-01T00:00:00.000Z", second.user.id);
+  getDb()
+    .prepare("UPDATE sessions SET expires_at=? WHERE user_id=?")
+    .run("2000-01-01T00:00:00.000Z", second.user.id);
   assert.equal(getSessionUser(second.cookie.split("=")[1]), null);
   assert.equal((await api("/dashboard", { cookie: second.cookie })).response.status, 401);
 });
@@ -1156,7 +1178,10 @@ test("session lookup propagates database errors instead of classifying them as a
   try {
     assert.equal(getSessionUser(undefined), null);
     assert.equal(getSessionUser("x".repeat(101)), null);
-    assert.throws(() => getSessionUser(cookie.split("=")[1]), (error: unknown) => error instanceof Error && !(error instanceof HttpError));
+    assert.throws(
+      () => getSessionUser(cookie.split("=")[1]),
+      (error: unknown) => error instanceof Error && !(error instanceof HttpError),
+    );
     const response = await api("/me", { cookie });
     assert.equal(response.response.status, 500);
     assert.equal(response.response.headers.has("location"), false);
@@ -1170,10 +1195,31 @@ test("session lookup propagates database errors instead of classifying them as a
 test("guardian settings and notification history stay separate for accounts A and B", async () => {
   const first = await account("account-a@example.com");
   const second = await account("account-b@example.com");
-  await api("/settings", { method: "PATCH", cookie: second.cookie, body: { guardianEmail: "guardian-b@example.com", guardianEnabled: true, guardianConsent: true, guardianDelayMinutes: 5 } });
-  await api("/settings", { method: "PATCH", cookie: first.cookie, body: { userId: second.user.id, guardianEmail: "guardian-a@example.com", guardianEnabled: true, guardianConsent: true, guardianDelayMinutes: 5 } });
-  const settingsA = (await api<{ guardianEmail: string }>("/settings", { cookie: first.cookie })).payload.data;
-  const settingsB = (await api<{ guardianEmail: string }>("/settings", { cookie: second.cookie })).payload.data;
+  await api("/settings", {
+    method: "PATCH",
+    cookie: second.cookie,
+    body: {
+      guardianEmail: "guardian-b@example.com",
+      guardianEnabled: true,
+      guardianConsent: true,
+      guardianDelayMinutes: 5,
+    },
+  });
+  await api("/settings", {
+    method: "PATCH",
+    cookie: first.cookie,
+    body: {
+      userId: second.user.id,
+      guardianEmail: "guardian-a@example.com",
+      guardianEnabled: true,
+      guardianConsent: true,
+      guardianDelayMinutes: 5,
+    },
+  });
+  const settingsA = (await api<{ guardianEmail: string }>("/settings", { cookie: first.cookie }))
+    .payload.data;
+  const settingsB = (await api<{ guardianEmail: string }>("/settings", { cookie: second.cookie }))
+    .payload.data;
   assert.equal(settingsA.guardianEmail, "guardian-a@example.com");
   assert.equal(settingsB.guardianEmail, "guardian-b@example.com");
   saveSupplement(first.user.id, input());
@@ -1181,10 +1227,19 @@ test("guardian settings and notification history stay separate for accounts A an
   const now = at("10:00");
   await runNotifications({ userId: first.user.id, now });
   await runNotifications({ userId: first.user.id, now: later(now, 5) });
-  const notificationsA = (await api<{ recipient: string }[]>("/notifications", { cookie: first.cookie })).payload.data;
-  assert.deepEqual(new Set(notificationsA.map((item) => item.recipient)), new Set([first.user.email, "guardian-a@example.com"]));
+  const notificationsA = (
+    await api<{ recipient: string }[]>("/notifications", { cookie: first.cookie })
+  ).payload.data;
+  assert.deepEqual(
+    new Set(notificationsA.map((item) => item.recipient)),
+    new Set([first.user.email, "guardian-a@example.com"]),
+  );
   assert.deepEqual((await api("/notifications", { cookie: second.cookie })).payload.data, []);
-  await api("/settings", { method: "PATCH", cookie: first.cookie, body: { guardianEnabled: false } });
+  await api("/settings", {
+    method: "PATCH",
+    cookie: first.cookie,
+    body: { guardianEnabled: false },
+  });
   assert.equal(settings(second.user.id).guardianEnabled, true);
   assert.equal(settings(second.user.id).guardianEmail, "guardian-b@example.com");
 });
