@@ -6,7 +6,7 @@
 
 [실행 중인 서비스](https://haru-nutri-production.up.railway.app) · [GitHub 저장소](https://github.com/june-young19/haru-nutri) · [외부 배포 가이드](docs/DEPLOYMENT.md) · [시연 가이드](docs/DEMO.md)
 
-Railway에 웹과 알림 워커를 배포했습니다. 공개 HTTPS 주소에서 회원가입·영양제 저장·복용 완료·계정 분리와 웹 재시작 후 데이터 보존을 확인했습니다. 현재 이메일 공급자를 Brevo로 전환하는 작업은 별도 검증 단계입니다. **Brevo의 본인·외부 수신자·보호자 실제 메일 수신은 아직 확인하지 않았습니다.** 최신 범위는 [검증 기록](docs/VERIFICATION.md)에 구분합니다.
+Railway 웹과 알림 워커에 배포해 회원가입·저장·복용 체크·계정 분리와 재시작 후 데이터 보존을 확인했습니다. **Brevo 자동 알림의 본인 Gmail·별도 Gmail 수신자·동의한 보호자 실제 수신을 확인했습니다.** 별도로 검사한 학교 이메일 두 건은 공급자 `Delivered`만 확인되었고 실제 수신은 미확인입니다. [검증 기록](docs/VERIFICATION.md)
 
 **설문과 성분 안내는 생활습관을 돌아보기 위한 참고 정보입니다. 의학적 진단·치료·복용 처방을 제공하지 않으며, 성분 중복 자체를 위험하다고 판단하지 않습니다.**
 
@@ -199,7 +199,7 @@ pnpm reminders
 
 ### B. Brevo 계정·발신자·키 설정
 
-1. [Brevo](https://www.brevo.com)에 가입하고 계정 확인을 마칩니다. Transactional 메뉴에서 발송 기능을 사용할 수 있는지 확인합니다. 계정 검토나 제한 안내가 있으면 이를 먼저 해결합니다.
+1. [Brevo](https://www.brevo.com)에 가입하고 계정 확인을 마칩니다. Transactional 메뉴에서 발송 기능을 사용할 수 있는지 확인합니다. API Key 생성·첫 발송 전에 전화번호 인증이나 계정 검토를 요구하면 계정 소유자가 해당 절차를 먼저 완료합니다.
 2. Settings → Senders, Domains, IPs → Senders → Add a sender에서 이름 `하루영양`과 본인이 접근할 수 있는 발신 이메일을 등록합니다. 도메인을 인증하지 않은 경우 해당 메일로 온 6자리 코드를 입력해 발신자를 확인합니다. [발신자 등록 안내](https://help.brevo.com/hc/en-us/articles/208836149-Create-a-new-sender-From-name-and-From-email)
 3. Settings → SMTP & API → API Keys & MCP → Generate new API key에서 전용 키를 생성합니다. **SMTP Key가 아닌 API Key**를 사용합니다. 전체 값은 생성 시에만 표시되므로 비밀 저장소에 저장하고 채팅·화면 캡처·Git에 넣지 않습니다. [API Key 관리](https://help.brevo.com/hc/en-us/articles/209467485-Create-and-manage-your-API-keys)
 4. 로컬 `.env` 또는 Railway **웹 서비스** Variables에 아래 항목을 설정합니다. 빈 칸에 실제 값을 비공개로 입력합니다. `EMAIL_FROM`에는 `이름 <주소>` 형식 대신 등록한 이메일 주소만 넣습니다.
@@ -216,7 +216,7 @@ APP_URL=https://haru-nutri-production.up.railway.app
 
 #### 도메인을 구매하지 않는 해커톤 설정
 
-본인 Gmail 주소를 발신자로 등록·확인해 시작할 수 있습니다. Gmail의 DNS를 소유한 것이 아니므로 Gmail 도메인을 직접 인증했다고 표시하지 않습니다. Brevo는 무료 또는 인증되지 않은 발신 도메인을 사용하는 **트랜잭션 메일의 발신 주소를 `이름@계정번호.t-sender-sib.com` 형태로 임시 대체**한다고 안내합니다. 원래 Gmail 주소가 받는 사람에게 그대로 표시된다고 보장하지 말고 실제 수신 메일의 From을 확인하세요. 이 대체 기능은 영구 보장된 방식이 아니며 장기 운영에는 소유 도메인의 인증을 권장합니다. [발신자 요구 사항과 임시 대체 주소](https://help.brevo.com/hc/en-us/articles/14925263522578-Comply-with-Gmail-Yahoo-and-Microsoft-s-requirements-for-email-senders)
+본인 Gmail 주소를 발신자로 등록·확인해 시작할 수 있습니다. Gmail의 DNS를 소유한 것이 아니므로 Gmail 도메인을 직접 인증했다고 표시하지 않습니다. Brevo 공식 문서는 인증되지 않은 발신자의 트랜잭션 메일에 `*.t-sender-sib.com` 대체 주소를 예시로 안내합니다. **이번 실제 Brevo 로그에서는 From이 `*.brevosend.com`으로 대체되고 Reply-To는 등록한 Gmail 주소로 유지된 것을 확인했습니다.** 표시 도메인이 공식 예시와 같다고 가정하지 말고 실제 메시지의 From을 확인하세요. 이 대체 기능은 영구 보장된 방식이 아니며 장기 운영에는 소유 도메인의 인증을 권장합니다. [공식 발신자 요구 사항](https://help.brevo.com/hc/en-us/articles/14925263522578-Comply-with-Gmail-Yahoo-and-Microsoft-s-requirements-for-email-senders)
 
 이 구성은 본인 주소 외 수신자에게도 보내기 위한 방식입니다. 다만 계정 승인·발신자 확인·IP 제한·잔여 발송량·실제 전달 결과는 각 배포에서 확인해야 합니다. 본인 수신 성공만으로 일반 Gmail·Naver 사용자나 보호자의 수신 성공을 선언하지 않습니다.
 
@@ -231,6 +231,8 @@ Settings → Security → Authorized IPs에서 API IP 제한을 확인합니다.
 사용자 설정에서 본인 알림을 켜고 새 미확인 일정을 준비합니다. 워커가 유예 시간 이후 검사하면 서버에서 `POST https://api.brevo.com/v3/smtp/email`을 호출합니다. 인증은 `api-key` 헤더이며 `sender`, `to`, `subject`, `htmlContent`/`textContent`를 전달합니다. 정상 접수는 HTTP 201의 `messageId`로 확인합니다. API Key는 브라우저에 전달하지 않습니다. [Brevo 발송 API](https://developers.brevo.com/reference/send-transac-email)
 
 앱의 `sent`는 API 요청 접수 상태입니다. Brevo Transactional → Logs에서 해당 시간·제목의 이벤트를 확인하고, `Delivered`와 `Deferred`·`Blocked`·오류를 구분합니다. `Delivered`는 수신 서버로 전달되었다는 뜻이며 받은편지함 도착 보장은 아닙니다. 본인, Brevo 계정과 무관한 외부 Gmail/Naver 수신자, 명시적으로 동의한 보호자 각각의 실제 메일함도 확인합니다. Gmail에서는 올바른 계정을 선택한 뒤 `in:anywhere 하루영양` 검색으로 전체 폴더를 확인할 수 있습니다. 스팸·프로모션 등 분류 위치는 직접 확인한 경우에만 기록합니다. [트랜잭션 로그 확인](https://help.brevo.com/hc/en-us/articles/360021533839-Manage-your-transactional-logs-and-email-previews), [이벤트 의미](https://help.brevo.com/hc/en-us/articles/35699922048146-View-and-export-your-event-logs)
+
+회사·학교 주소라면 실제 메일 수신 서비스가 Gmail인지 Microsoft 365 Outlook인지 먼저 확인합니다. 계정 로그인에 사용하는 주소가 같다고 같은 메일함인 것은 아닙니다. 올바른 서비스의 전체 폴더·정크·격리함을 확인하고, `Delivered` 이후에도 없으면 관리자에게 수신 필터와 지연 반송 여부를 확인합니다. 확인 전에 스팸 또는 차단으로 단정하지 않습니다. [Brevo의 Delivered인데 수신하지 못한 경우](https://help.brevo.com/hc/en-us/articles/17677373572626-FAQs-Why-emails-are-marked-delivered-but-are-not-received)
 
 실제 API 오류·시간 초과·잘못된 설정을 캡처 성공으로 바꾸는 fallback은 없습니다. 캡처 시연은 운영 발송과 구분된 환경에서 `EMAIL_MODE=capture`를 명시한 경우에만 사용합니다. 이미 캡처된 일정·날짜는 `brevo`로 바꿔 다시 발송하지 않으며, 캡처된 본인 알림은 실제 보호자 알림의 근거가 되지 않습니다. 전송 점검에는 새 일정 또는 다음 날짜 일정을 사용하세요. 시연 후 테스트 제품을 삭제하고 본인 유예 시간은 기본 30분으로 되돌립니다.
 
@@ -316,13 +318,13 @@ pnpm start
 
 ### 검증 범위
 
-2026-09-19 **Brevo 변경분을 포함한 자동 테스트 73개**(도메인 10·UL 12·서버 38·이메일 공급자 5·워커 8), capture 모드의 실제 HTTP 통합 7개 그룹, TypeScript 검사, lockfile 설치와 최종 운영 빌드를 통과했습니다. 로컬 실행 환경의 프로세스 제한에 따른 실행 방식은 [검증 기록](docs/VERIFICATION.md)에 남겼습니다. 코드 전환은 완료했지만 Brevo의 운영 변수 적용·재배포·실제 이메일 전달은 아직 검증하지 않았습니다.
+2026-09-19 **Brevo 변경분을 포함한 자동 테스트 73개**(도메인 10·UL 12·서버 38·이메일 공급자 5·워커 8), capture 모드의 실제 HTTP 통합 7개 그룹, TypeScript 검사, lockfile 설치와 최종 운영 빌드를 통과했습니다. 같은 코드의 표준 GitHub CI와 Railway 웹·워커 배포도 성공했습니다. 두 차례 실제 자동 이메일 검사에서 총 6통의 API 접수·Brevo `Delivered`와 본인·별도 Gmail·보호자 세 건의 실제 수신을 확인했습니다. 각 메시지의 확인 범위는 [검증 기록](docs/VERIFICATION.md)에 구분했습니다.
 
-전환 전 GitHub Actions에서는 표준 `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm test`, `pnpm test:integration`, `pnpm build`가 모두 성공했습니다. [당시 CI 실행 결과](https://github.com/june-young19/haru-nutri/actions/runs/35424692457) 로컬 Windows 에이전트 환경의 `spawn EPERM` 제약에서는 같은 테스트를 컴파일하고 프로세스 격리를 끄는 방식으로도 62개를 통과했습니다.
+Brevo 전환 커밋 `a711e5d9cbb04553d7dfff848cc0b407fbdd50db`의 GitHub Actions에서 표준 `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm test`, `pnpm test:integration`, `pnpm build`가 모두 성공했습니다. [CI 실행 결과](https://github.com/june-young19/haru-nutri/actions/runs/35427479462)
 
-공개 GitHub 저장소에 소스를 업로드했고 Railway에서 실제 Docker 빌드·웹 서비스·알림 워커 실행을 확인했습니다. 웹에는 `/app/data`의 500MB 영구 볼륨을 연결했습니다. 공개 HTTPS에서 별도 검증 3개 그룹을 통과해 가입, 20+25=45μg 합산·저장, 복용 완료·삭제 이력, 두 계정과 보호자 정보 분리, 로그아웃 세션 무효화·재로그인을 확인했습니다. 웹을 실제 재시작한 뒤 기존 세션·프로필·제품·복용 이력이 유지되는 것도 확인했습니다. 390px 모바일 대시보드·설정의 가로 넘침도 없었습니다.
+공개 GitHub 저장소의 해당 커밋으로 Railway 웹 `haru-nutri`와 워커 `haru-reminders`를 배포해 ACTIVE 상태를 확인했습니다. `/app/data`의 500MB 영구 볼륨을 유지했고 기존 테스트 계정 2개의 데이터가 재배포 후 보존되었습니다. 전환 후 공개 HTTPS 검사 3개 그룹에서 새 두 계정 가입, 여러 성분·D 20+25=45μg 합산, 복용 완료·삭제 이력, 제품·보호자 정보 분리, 로그아웃·재로그인을 확인했습니다. 이어 웹을 실제 Restart한 후에도 세션·프로필·보호자 분리·활성 제품·삭제 제품 완료 기록이 유지되었습니다. 이 검사에서는 실제 메일을 보내지 않도록 본인 알림을 껐습니다. 이번 모바일 점검은 공개 `/settings`의 446px 화면에서 주요 카드·Brevo 안내·저장 버튼과 가로 넘침 없음을 확인한 범위입니다. 이전 버전의 390px 점검은 검증 기록에 별도로 남깁니다.
 
-이전 버전에서 확인한 자동 이메일 전달·수신은 Brevo 검증에 포함하지 않습니다. 현재 Brevo 계정·API Key 연결, 운영 변수 적용과 배포, API 접수, 공급자 전달, 본인·외부 수신자·보호자의 실제 수신 확인이 남아 있습니다. 키 없이 Brevo 모드로 배포하면 앱 기능은 사용할 수 있지만 알림 API는 설정 오류를 반환합니다. 개인 이름·수신자 주소·API Key는 소스와 공개 검증 기록에 포함하지 않습니다.
+운영에 `EMAIL_MODE=brevo`, API Key, 확인한 Gmail 발신자와 표시 이름을 연결하고 웹·워커를 재배포했습니다. 1차 검사에서 16:02 본인 Gmail은 기본 받은편지함 수신을 확인했고, 학교 이메일의 일반·보호자 알림은 `Delivered` 이후에도 사용자가 Outlook에서 찾지 못해 실제 수신을 확인하지 못했습니다. 2차 검사에서는 16:16 별도 Gmail 일반 메일과 16:21 해당 Gmail 보호자 메일을 사용자가 확인했습니다. 일반 메일의 폴더는 미확인, 보호자 메일은 기본 받은편지함입니다. 모든 발송은 직접 API 호출이나 캡처가 아닌 실제 워커의 시간 조건으로 처리했습니다. 본인 유예 시간은 30분을 유지했고 임시 보호자 설정은 알림 끄기·주소 비우기·120분으로 복원했습니다. 테스트 제품 삭제 후 16:26:28 워커의 모든 집계가 0인 것도 확인했습니다. 개인 정보와 API Key는 공개 기록에 포함하지 않습니다.
 
 ## 9. 배포
 

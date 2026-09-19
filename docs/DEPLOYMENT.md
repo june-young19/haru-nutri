@@ -2,9 +2,15 @@
 
 이 문서는 동일한 GitHub 저장소에서 **웹 서비스 1개 + 상시 알림 워커 1개**를 배포하는 절차입니다. SQLite는 웹 서비스의 영구 볼륨에만 저장합니다. 워커는 인증된 HTTP 요청으로 웹 서버의 알림 처리를 호출하므로 별도 DB나 공유 파일 시스템이 필요하지 않습니다.
 
-**실제 공개 서비스:** [하루영양 열기](https://haru-nutri-production.up.railway.app) · [GitHub 저장소](https://github.com/june-young19/haru-nutri) · [Brevo 전환 전 CI](https://github.com/june-young19/haru-nutri/actions/runs/35424692457)
+**실제 공개 서비스:** [하루영양 열기](https://haru-nutri-production.up.railway.app) · [GitHub 저장소](https://github.com/june-young19/haru-nutri) · [Brevo 버전 CI](https://github.com/june-young19/haru-nutri/actions/runs/35427479462)
 
-2026-09-19 Brevo 전환 전 Railway 웹 `haru-nutri`와 워커 `haru-reminders`의 ONLINE 상태, 클라우드 Docker 빌드·실행, `/app/data`의 500MB 영구 볼륨을 확인했습니다. 공개 HTTPS의 가입·저장·복용·계정 분리·모바일 화면과 웹 재시작 후 데이터 보존도 확인했습니다. 기존 서비스와 볼륨을 유지하며 Brevo로 전환합니다. **Brevo 변경분의 재배포 및 본인·외부 수신자·보호자 메일 전달은 아직 검증하지 않았습니다.** [검증 기록](VERIFICATION.md)
+2026-09-19 Brevo 전환 커밋 `a711e5d9cbb04553d7dfff848cc0b407fbdd50db`의 표준 CI가 성공했고 Railway 웹 `haru-nutri`와 워커 `haru-reminders`에 배포해 ACTIVE 상태를 확인했습니다. 기존 `/app/data`의 500MB 영구 볼륨과 공개 URL을 유지했습니다. 재배포 후 기존 두 테스트 계정 데이터 보존과 새 두 계정의 가입·제품·성분 합산·복용·삭제 이력·보호자 정보 분리·로그아웃을 공개 HTTPS 검사 3개 그룹으로 확인했습니다. 15:54:41 KST에 웹을 실제 Restart한 뒤에도 세션·프로필·보호자 분리·활성 제품·삭제 제품 완료 기록이 유지되는 것을 확인했습니다.
+
+Brevo 계정 인증·Gmail Sender 확인·API Key 연결을 마치고 웹·워커를 재배포했습니다. `EMAIL_MODE=brevo`와 발신자 설정을 적용했고 사용하지 않는 이전 공급자 키는 삭제했습니다. 두 차례 검사에서 실제 Railway 워커가 총 6통을 자동 발송해 모두 API 접수·Brevo `Delivered`를 확인했습니다. 본인 Gmail, 별도 Gmail의 일반 알림, 해당 Gmail의 동의한 보호자 알림은 사용자 실제 수신을 확인했습니다. 학교 이메일로 보낸 일반·보호자 알림은 `Delivered` 이후에도 실제 수신을 확인하지 못해 별도로 기록했습니다. [검증 기록](VERIFICATION.md)
+
+검사 후 테스트 제품을 삭제하고 보호자 알림 끄기·주소 비우기·유예 120분 복원을 완료했습니다. 본인 유예 시간은 30분을 유지했습니다. 16:26:28 최종 워커의 검사 대상·발송·캡처·실패·건너뜀은 모두 0이었습니다.
+
+공개 `/settings`는 446px 모바일 화면에서 이름·나이·이메일 카드, Brevo 안내와 저장 버튼을 직접 확인했고 가로 넘침이 없었습니다. 설정값은 변경하지 않았으며 이번 점검을 전체 페이지의 모바일 검증으로 확대하지 않습니다.
 
 아래 절차로 본인 환경에 새로 배포할 수 있습니다. `<실제 HTTPS 도메인>` 자리에는 해당 배포에서 생성한 주소를 넣습니다. 현재 주소는 `https://haru-nutri-production.up.railway.app`입니다. 기존 배포를 업데이트할 때는 새 프로젝트나 새 볼륨을 만들지 말고 아래의 전환 절차를 따릅니다. Brevo 발신자·키·무료 Gmail 주소 사용 조건은 [README 이메일 설정](../README.md#6-이메일-알림-연결)을 참고하세요.
 
@@ -105,7 +111,7 @@ Railway 볼륨은 root 소유로 마운트됩니다. 현재 Dockerfile은 기본
 7. Brevo의 계정·발신자·키를 설정한 뒤 `EMAIL_MODE=brevo`로 웹을 재배포합니다. 새 알림 대상 일정으로 검사하고 앱의 API 접수 상태, Brevo Transactional → Logs의 전달 상태, 실제 수신함을 각각 확인합니다. 일반 Gmail·Naver 주소의 별도 수신자는 Brevo 가입 없이도 확인할 수 있어야 하며 본인 테스트로 대신하지 않습니다.
 8. 사용자 알림을 받은 뒤에도 미확인이 유지되고 보호자 알림 동의가 저장된 경우에만 보호자 단계가 작동하는지 테스트 계정으로 확인합니다.
 
-무료 Gmail 발신자는 Brevo에서 이메일 확인을 거쳐 등록하며 실제 발신 주소가 임시 대체될 수 있습니다. 도메인 구매 없이 먼저 검증하되, 실제 외부 수신과 표시된 From을 확인하기 전에는 정상 전달을 단정하지 않습니다. [공식 발신자 요구 사항](https://help.brevo.com/hc/en-us/articles/14925263522578-Comply-with-Gmail-Yahoo-and-Microsoft-s-requirements-for-email-senders)
+무료 Gmail 발신자는 Brevo에서 이메일 확인을 거쳐 등록하며 실제 발신 주소가 임시 대체될 수 있습니다. 이번 실제 로그의 From은 `*.brevosend.com`, Reply-To는 등록한 Gmail 주소였습니다. 공식 문서의 트랜잭션 예시 `*.t-sender-sib.com`과 다를 수 있으므로 실제 로그·메일을 확인합니다. 개인 주소·계정 번호는 공개하지 않습니다. [공식 발신자 요구 사항](https://help.brevo.com/hc/en-us/articles/14925263522578-Comply-with-Gmail-Yahoo-and-Microsoft-s-requirements-for-email-senders)
 
 이미 `capture`된 동일 일정은 실제 전송으로 다시 처리되지 않습니다. 전송 검증은 새 테스트 일정으로 수행합니다. 본인 알림을 끄거나 제품을 삭제하면 다음 검사에서 알림 대상에서 제외됩니다. 보호자 알림은 동의와 본인 알림 처리 상태를 서버가 다시 확인합니다.
 

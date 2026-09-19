@@ -46,7 +46,7 @@ UL 자료는 공식 출처·출처 문서 개정 연도·버전·적용 연령·
 
 공급자 대시보드의 `Delivered`도 사용자가 메일을 열어 확인했다는 의미는 아닙니다. 받은편지함·스팸함 확인과 앱의 전송 상태는 별도로 구분해 보고합니다.
 
-Brevo 전환 후 본인·외부 수신자·보호자의 실제 이메일 전달 검증은 아직 완료하지 않았습니다. 이전 공급자의 수신 확인을 이번 연결의 성공 근거로 사용하지 않습니다. API 접수, 공급자 전달 이벤트, 수신자의 직접 확인을 구분해 [검증 기록](VERIFICATION.md)에 남깁니다. 한 번의 수신 성공으로 모든 수신자에게 전달을 보장하지 않습니다.
+Brevo 전환 후 실제 Railway 워커의 두 차례 검사에서 총 6통의 API 접수·`Delivered`를 확인했고, 그중 본인 Gmail·별도 Gmail 일반 알림·동의한 Gmail 보호자 알림은 사용자 수신도 확인했습니다. 학교 이메일 두 건은 `Delivered` 이후에도 사용자가 Outlook에서 찾지 못해 실제 수신은 미확인입니다. 각 메시지의 확인 범위는 [검증 기록](VERIFICATION.md)에 구분합니다. 이전 공급자의 기록을 재사용하지 않으며 일부 수신 성공으로 모든 주소에 전달을 보장하지 않습니다.
 
 Brevo 발신자 확인은 발신 주소를 제어한다는 절차이며 앱 회원의 이메일 소유권 확인을 대신하지 않습니다. 무료 Gmail 발신자는 공급자에 의해 다른 From 주소로 표시될 수 있습니다. API IP 제한이 요청을 차단하면 계정의 Authorized IPs에서 해당 서버 IP를 확인한 뒤 필요한 항목만 승인합니다. [Brevo 발신자 안내](https://help.brevo.com/hc/en-us/articles/208836149-Create-a-new-sender-From-name-and-From-email), [API IP 보안](https://help.brevo.com/hc/en-us/articles/5740111683858-Authorize-and-block-IP-addresses-for-API-and-SMTP-security)
 
