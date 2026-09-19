@@ -36,6 +36,9 @@ import { duplicateGroups, surveyQuestions, surveyResults } from "@/lib/domain";
 import type { Dashboard, DayHistory, Settings, Supplement, TodayItem, User } from "@/lib/types";
 import type { SafetyAnalysis } from "@/lib/safety";
 import { SafetyResults } from "./safety-results";
+import { PasswordReset } from "./password-reset";
+import { ProductDetails, ProductMatches, ProductSearch } from "./product-search";
+import type { Product } from "@/lib/products";
 
 const sessionChangeKey = "haru:session-change";
 const sessionExpiredEvent = "haru:session-expired";
@@ -89,7 +92,11 @@ async function api<T>(
   });
   const result = await response.json();
   if (revision !== sessionRevision) throw new DOMException("Session changed", "AbortError");
-  if (response.status === 401 && !["/me", "/auth/login", "/auth/signup"].includes(path)) {
+  if (
+    response.status === 401 &&
+    !["/me", "/auth/login", "/auth/signup"].includes(path) &&
+    !path.startsWith("/auth/password-reset/")
+  ) {
     hidePrivateView();
     window.dispatchEvent(new Event(sessionExpiredEvent));
   }
@@ -269,7 +276,9 @@ export default function NutriApp() {
     const controller = new AbortController();
     sessionCheck.current = controller;
     const current = userRef.current;
-    const publicPage = ["/", "/login", "/signup"].includes(window.location.pathname);
+    const publicPage = ["/", "/login", "/signup", "/forgot-password"].includes(
+      window.location.pathname,
+    );
     setAuthError("");
     if (!current) setChecking(true);
     if (!publicPage) hidePrivateView();
@@ -375,6 +384,13 @@ export default function NutriApp() {
     replaceSessionView(next.onboarded ? "/dashboard" : "/onboarding", true);
   }
   if (path === "/") return <Landing user={user} />;
+  if (path === "/forgot-password")
+    return (
+      <PasswordReset
+        request={api}
+        onComplete={() => replaceSessionView("/login?reset=success", true)}
+      />
+    );
   if (path === "/login" || path === "/signup")
     return <AuthPage key={path} signup={path === "/signup"} onSuccess={signedIn} />;
   if (checking || !user)
@@ -422,6 +438,7 @@ export default function NutriApp() {
       />
     );
   else if (path === "/survey/results") page = <SurveyResults />;
+  else if (path === "/products") page = <ProductMatches request={api} />;
   else if (path === "/supplements") page = <SupplementsPage />;
   else if (path === "/supplements/new") page = <SupplementEditor />;
   else if (/^\/supplements\/[^/]+$/.test(path)) page = <SupplementEditor id={path.split("/")[2]} />;
@@ -677,6 +694,12 @@ function Landing({ user }: { user: User | null }) {
 function AuthPage({ signup, onSuccess }: { signup: boolean; onSuccess: (user: User) => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [resetComplete, setResetComplete] = useState(false);
+  useEffect(() => {
+    setResetComplete(
+      !signup && new URLSearchParams(window.location.search).get("reset") === "success",
+    );
+  }, [signup]);
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setBusy(true);
@@ -737,6 +760,11 @@ function AuthPage({ signup, onSuccess }: { signup: boolean; onSuccess: (user: Us
           </p>
           <form onSubmit={submit}>
             <ErrorBox error={error} />
+            {resetComplete && (
+              <div className="notice" role="status">
+                비밀번호를 재설정했습니다. 새 비밀번호로 로그인해 주세요.
+              </div>
+            )}
             {signup && (
               <>
                 <label>
@@ -802,6 +830,11 @@ function AuthPage({ signup, onSuccess }: { signup: boolean; onSuccess: (user: Us
               <ArrowRight size={18} />
             </button>
           </form>
+          {!signup && (
+            <p className="auth-switch">
+              <Link href="/forgot-password">비밀번호를 잊으셨나요?</Link>
+            </p>
+          )}
           <p className="auth-switch">
             {signup ? "이미 계정이 있나요?" : "아직 계정이 없나요?"}{" "}
             <Link href={signup ? "/login" : "/signup"}>{signup ? "로그인" : "회원가입"}</Link>
@@ -1206,6 +1239,8 @@ function SupplementsPage() {
 type IngredientInput = { name: string; amount: number | string; unit: string };
 function SupplementEditor({ id }: { id?: string }) {
   const router = useRouter();
+  const [entryMode, setEntryMode] = useState<"search" | "manual">(id ? "manual" : "search");
+  const [importedProduct, setImportedProduct] = useState<Product | null>(null);
   const [name, setName] = useState("");
   const [brand, setBrand] = useState("");
   const [color, setColor] = useState("blue");
@@ -1257,6 +1292,7 @@ function SupplementEditor({ id }: { id?: string }) {
   useEffect(() => {
     if (!id) {
       if (new URLSearchParams(window.location.search).get("example") === "multivitamin") {
+        setEntryMode("manual");
         setName("데일리 종합비타민");
         setBrand("시연용 예시 · 실제 제품 라벨로 수정해 주세요");
         setIngredients([
@@ -1324,6 +1360,34 @@ function SupplementEditor({ id }: { id?: string }) {
   function updateIngredient(index: number, key: keyof IngredientInput, value: string) {
     setIngredients((a) => a.map((v, i) => (i === index ? { ...v, [key]: value } : v)));
   }
+  function importProduct(product: Product) {
+    const filled = product.ingredients.map((item) => ({
+      name: item.name,
+      amount: String(item.amount),
+      unit: item.unit,
+    }));
+    const missing = product.declaredNutrients.filter(
+      (name) => !product.ingredients.some((item) => item.name === name),
+    );
+    if (filled.length + missing.length > 20) {
+      setError(
+        "이 제품은 성분이 20개를 넘습니다. 현재 양식은 최대 20개를 지원하므로 자동으로 일부를 생략하지 않습니다. 직접 입력에서 제품 표시사항을 확인해주세요.",
+      );
+      return;
+    }
+    setName(product.name);
+    setBrand(product.manufacturer);
+    setIngredients(
+      [...filled, ...missing.map((name) => ({ name, amount: "", unit: "" }))].length
+        ? [...filled, ...missing.map((name) => ({ name, amount: "", unit: "" }))]
+        : [{ name: "", amount: "", unit: "" }],
+    );
+    setTimes(Array.from({ length: product.dailyFrequency || 1 }, () => ""));
+    setImportedProduct(product);
+    setEntryMode("manual");
+    setError("");
+    setPreview(null);
+  }
   if (loading) return <Spinner />;
   return (
     <div className="form-width">
@@ -1335,254 +1399,315 @@ function SupplementEditor({ id }: { id?: string }) {
         title={id ? "영양제 상세 · 수정" : "새로운 영양제 등록"}
         subtitle="제품 라벨을 보면서 하나씩 입력해 주세요."
       />
-      <form onSubmit={submit}>
-        <ErrorBox error={error} />
-        {saved && (
-          <div role="status" className="alert success">
-            {saved} <Link href="/dashboard">오늘의 일정 확인 →</Link>
+      {!id && (
+        <>
+          <div className="entry-methods" aria-label="영양제 등록 방법">
+            <button
+              type="button"
+              className={`button ${entryMode === "search" ? "primary" : "secondary"}`}
+              aria-pressed={entryMode === "search"}
+              onClick={() => setEntryMode("search")}
+            >
+              제품 검색으로 추가
+            </button>
+            <button
+              type="button"
+              className={`button ${entryMode === "manual" ? "primary" : "secondary"}`}
+              aria-pressed={entryMode === "manual"}
+              onClick={() => setEntryMode("manual")}
+            >
+              직접 입력
+            </button>
           </div>
-        )}
-        <section className="card form-card">
-          <h2>
-            <span className="step-badge">01</span>기본 정보
-          </h2>
-          <div className="two-fields">
-            <label>
-              영양제 이름 <b>*</b>
-              <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="예: 데일리 종합비타민"
-                maxLength={80}
-                required
-              />
-            </label>
-            <label>
-              제조사 또는 제품명 <span className="muted">선택</span>
-              <input
-                value={brand}
-                onChange={(e) => setBrand(e.target.value)}
-                placeholder="예: 제품 라벨의 제조사"
-                maxLength={100}
-              />
-            </label>
-          </div>
-          <label>구분 색상</label>
-          <div className="color-picker">
-            {colors.map((c) => (
+          {entryMode === "search" && (
+            <>
+              <ErrorBox error={error} />
+              <ProductSearch request={api} onImport={importProduct} />
+            </>
+          )}
+        </>
+      )}
+      {entryMode === "manual" && (
+        <>
+          {importedProduct && (
+            <section className="card import-summary">
+              <span className="badge blue-badge">공식 정보에서 불러온 초안</span>
+              <h2>{importedProduct.name}</h2>
+              <p>
+                아래 성분·하루 함량은 수정할 수 있어요. 복용 시간은 자동 추정하지 않으므로 직접 정해
+                주세요. 입력한 성분만 저장·분석됩니다.
+              </p>
+              <details>
+                <summary>원본 제품 정보 다시 확인</summary>
+                <ProductDetails product={importedProduct} />
+              </details>
+              {importedProduct.parseStatus !== "complete" && (
+                <p className="safety-warning">
+                  일부 성분 정보는 자동으로 확인할 수 없습니다. 제품 표시사항을 확인하여 직접
+                  입력해주세요. RAE·DFE·NE 등 별도 당량 단위는 일반 mg·μg로 임의 환산하지 마세요.
+                </p>
+              )}
+            </section>
+          )}
+          <form onSubmit={submit}>
+            <ErrorBox error={error} />
+            {saved && (
+              <div role="status" className="alert success">
+                {saved} <Link href="/dashboard">오늘의 일정 확인 →</Link>
+              </div>
+            )}
+            <section className="card form-card">
+              <h2>
+                <span className="step-badge">01</span>기본 정보
+              </h2>
+              <div className="two-fields">
+                <label>
+                  영양제 이름 <b>*</b>
+                  <input
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="예: 데일리 종합비타민"
+                    maxLength={80}
+                    required
+                  />
+                </label>
+                <label>
+                  제조사 또는 제품명 <span className="muted">선택</span>
+                  <input
+                    value={brand}
+                    onChange={(e) => setBrand(e.target.value)}
+                    placeholder="예: 제품 라벨의 제조사"
+                    maxLength={100}
+                  />
+                </label>
+              </div>
+              <label>구분 색상</label>
+              <div className="color-picker">
+                {colors.map((c) => (
+                  <button
+                    type="button"
+                    aria-label={`${c} 색상`}
+                    aria-pressed={color === c}
+                    className={`color-swatch ${c}`}
+                    key={c}
+                    onClick={() => setColor(c)}
+                  >
+                    {color === c && <Check size={18} />}
+                  </button>
+                ))}
+              </div>
+            </section>
+            <section className="card form-card">
+              <h2>
+                <span className="step-badge">02</span>복용 일정
+              </h2>
+              <p className="section-description">
+                매일 같은 시간에 복용할 일정을 등록해요. 한국 시간(Asia/Seoul) 기준입니다.
+              </p>
+              <label>
+                하루 복용 횟수
+                <select
+                  value={times.length}
+                  onChange={(e) => {
+                    const n = Number(e.target.value);
+                    setTimes((old) =>
+                      Array.from(
+                        { length: n },
+                        (_, i) => old[i] || `${String((9 + i * 3) % 24).padStart(2, "0")}:00`,
+                      ),
+                    );
+                  }}
+                >
+                  {Array.from({ length: 8 }, (_, i) => (
+                    <option key={i} value={i + 1}>
+                      하루 {i + 1}회
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="time-fields">
+                {times.map((time, i) => (
+                  <label key={i}>
+                    {i + 1}번째 복용 시간
+                    <input
+                      type="time"
+                      required
+                      value={time}
+                      onChange={(e) =>
+                        setTimes((a) => a.map((v, j) => (j === i ? e.target.value : v)))
+                      }
+                    />
+                  </label>
+                ))}
+              </div>
+              {id && (
+                <p className="field-help">
+                  오늘 이미 완료한 일정이 있으면 변경 사항은 내일부터 적용되어 기존 기록을
+                  보존합니다.
+                </p>
+              )}
+            </section>
+            <section className="card form-card">
+              <h2>
+                <span className="step-badge">03</span>성분과 하루 함량
+              </h2>
+              <div className="alert info">
+                성분별 <strong>하루 총 섭취량</strong>을 입력해 주세요. 예: 1회 50mg을 하루 2회
+                복용하면 100mg입니다. 복용 횟수를 다시 곱하지 않습니다.
+              </div>
+              <datalist id="ingredients">
+                {[
+                  "비타민 A",
+                  "비타민 B군",
+                  "비타민 B1",
+                  "비타민 B2",
+                  "비타민 B6",
+                  "비타민 B12",
+                  "비타민 C",
+                  "비타민 D",
+                  "비타민 E",
+                  "비타민 K",
+                  "마그네슘",
+                  "오메가3",
+                  "아연",
+                  "칼슘",
+                  "철",
+                  "엽산",
+                ].map((v) => (
+                  <option value={v} key={v} />
+                ))}
+              </datalist>
+              <div className="ingredient-rows">
+                {ingredients.map((v, i) => (
+                  <div className="ingredient-row" key={i}>
+                    <label>
+                      성분 이름
+                      <input
+                        list="ingredients"
+                        required
+                        maxLength={60}
+                        placeholder="예: 비타민 D"
+                        value={v.name}
+                        onChange={(e) => updateIngredient(i, "name", e.target.value)}
+                      />
+                    </label>
+                    <label>
+                      하루 함량
+                      <input
+                        required
+                        type="number"
+                        min="0.000001"
+                        max="10000000"
+                        step="any"
+                        inputMode="decimal"
+                        placeholder="20"
+                        value={v.amount}
+                        onChange={(e) => updateIngredient(i, "amount", e.target.value)}
+                      />
+                    </label>
+                    <label>
+                      단위
+                      <select
+                        value={v.unit}
+                        onChange={(e) => updateIngredient(i, "unit", e.target.value)}
+                        required
+                      >
+                        <option value="" disabled>
+                          단위 선택
+                        </option>
+                        {["mg", "μg", "mcg", "g", "IU"].map((u) => (
+                          <option key={u}>{u}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <button
+                      type="button"
+                      className="icon-button remove-ingredient"
+                      aria-label={`${i + 1}번째 성분 삭제`}
+                      disabled={ingredients.length === 1}
+                      onClick={() => setIngredients((a) => a.filter((_, j) => j !== i))}
+                    >
+                      <Trash2 size={18} />
+                    </button>
+                  </div>
+                ))}
+              </div>
               <button
                 type="button"
-                aria-label={`${c} 색상`}
-                aria-pressed={color === c}
-                className={`color-swatch ${c}`}
-                key={c}
-                onClick={() => setColor(c)}
+                className="button dashed full"
+                disabled={ingredients.length >= 20}
+                onClick={() => setIngredients((a) => [...a, { name: "", amount: "", unit: "mg" }])}
               >
-                {color === c && <Check size={18} />}
+                <Plus size={17} />
+                성분 추가
               </button>
-            ))}
-          </div>
-        </section>
-        <section className="card form-card">
-          <h2>
-            <span className="step-badge">02</span>복용 일정
-          </h2>
-          <p className="section-description">
-            매일 같은 시간에 복용할 일정을 등록해요. 한국 시간(Asia/Seoul) 기준입니다.
-          </p>
-          <label>
-            하루 복용 횟수
-            <select
-              value={times.length}
-              onChange={(e) => {
-                const n = Number(e.target.value);
-                setTimes((old) =>
-                  Array.from(
-                    { length: n },
-                    (_, i) => old[i] || `${String((9 + i * 3) % 24).padStart(2, "0")}:00`,
-                  ),
-                );
-              }}
-            >
-              {Array.from({ length: 8 }, (_, i) => (
-                <option key={i} value={i + 1}>
-                  하루 {i + 1}회
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="time-fields">
-            {times.map((time, i) => (
-              <label key={i}>
-                {i + 1}번째 복용 시간
-                <input
-                  type="time"
-                  required
-                  value={time}
-                  onChange={(e) => setTimes((a) => a.map((v, j) => (j === i ? e.target.value : v)))}
-                />
-              </label>
-            ))}
-          </div>
-          {id && (
-            <p className="field-help">
-              오늘 이미 완료한 일정이 있으면 변경 사항은 내일부터 적용되어 기존 기록을 보존합니다.
-            </p>
-          )}
-        </section>
-        <section className="card form-card">
-          <h2>
-            <span className="step-badge">03</span>성분과 하루 함량
-          </h2>
-          <div className="alert info">
-            성분별 <strong>하루 총 섭취량</strong>을 입력해 주세요. 예: 1회 50mg을 하루 2회 복용하면
-            100mg입니다. 복용 횟수를 다시 곱하지 않습니다.
-          </div>
-          <datalist id="ingredients">
-            {[
-              "비타민 A",
-              "비타민 B군",
-              "비타민 B1",
-              "비타민 B2",
-              "비타민 B6",
-              "비타민 B12",
-              "비타민 C",
-              "비타민 D",
-              "비타민 E",
-              "비타민 K",
-              "마그네슘",
-              "오메가3",
-              "아연",
-              "칼슘",
-              "철",
-              "엽산",
-            ].map((v) => (
-              <option value={v} key={v} />
-            ))}
-          </datalist>
-          <div className="ingredient-rows">
-            {ingredients.map((v, i) => (
-              <div className="ingredient-row" key={i}>
-                <label>
-                  성분 이름
-                  <input
-                    list="ingredients"
-                    required
-                    maxLength={60}
-                    placeholder="예: 비타민 D"
-                    value={v.name}
-                    onChange={(e) => updateIngredient(i, "name", e.target.value)}
-                  />
-                </label>
-                <label>
-                  하루 함량
-                  <input
-                    required
-                    type="number"
-                    min="0.000001"
-                    max="10000000"
-                    step="any"
-                    inputMode="decimal"
-                    placeholder="20"
-                    value={v.amount}
-                    onChange={(e) => updateIngredient(i, "amount", e.target.value)}
-                  />
-                </label>
-                <label>
-                  단위
-                  <select
-                    value={v.unit}
-                    onChange={(e) => updateIngredient(i, "unit", e.target.value)}
-                  >
-                    {["mg", "μg", "mcg", "g", "IU"].map((u) => (
-                      <option key={u}>{u}</option>
-                    ))}
-                  </select>
-                </label>
-                <button
-                  type="button"
-                  className="icon-button remove-ingredient"
-                  aria-label={`${i + 1}번째 성분 삭제`}
-                  disabled={ingredients.length === 1}
-                  onClick={() => setIngredients((a) => a.filter((_, j) => j !== i))}
-                >
-                  <Trash2 size={18} />
-                </button>
-              </div>
-            ))}
-          </div>
-          <button
-            type="button"
-            className="button dashed full"
-            disabled={ingredients.length >= 20}
-            onClick={() => setIngredients((a) => [...a, { name: "", amount: "", unit: "mg" }])}
-          >
-            <Plus size={17} />
-            성분 추가
-          </button>
-        </section>
-        <section className="card form-card safety-preview">
-          <h2>
-            <span className="step-badge">04</span>기존 영양제와 성분 비교
-          </h2>
-          <p className="section-description">
-            저장하기 전에 중복 성분과 연령별 참고 상한선을 확인해요. 수정할 때는 기존 제품을 새
-            입력값으로 교체하여 계산합니다.
-          </p>
-          <button
-            type="button"
-            className="button secondary full"
-            disabled={busy || checkingSafety}
-            onClick={(e) => {
-              if (e.currentTarget.form?.reportValidity()) void checkSafety();
-            }}
-          >
-            {checkingSafety ? (
-              <LoaderCircle size={18} className="spin" />
-            ) : (
-              <FlaskConical size={18} />
-            )}
-            성분 검사
-          </button>
-          {!analysis && (
-            <p className="field-help">입력을 변경했다면 성분 검사를 다시 눌러 주세요.</p>
-          )}
-          {analysis && (
-            <div aria-live="polite">
-              <SafetyResults analysis={analysis} preview />
-              {analysis.hasExceedance && (
-                <label className="checkbox-label safety-ack">
-                  <input
-                    type="checkbox"
-                    checked={acknowledged}
-                    onChange={(e) => setAcknowledgedSignature(e.target.checked ? signature : "")}
-                  />
-                  <span>
-                    <strong>내용을 확인했습니다</strong>
-                    <small>
-                      참고 상한선 초과 안내를 확인했으며, 필요한 경우 전문가에게 확인하겠습니다.
-                    </small>
-                  </span>
-                </label>
+            </section>
+            <section className="card form-card safety-preview">
+              <h2>
+                <span className="step-badge">04</span>기존 영양제와 성분 비교
+              </h2>
+              <p className="section-description">
+                저장하기 전에 중복 성분과 연령별 참고 상한선을 확인해요. 수정할 때는 기존 제품을 새
+                입력값으로 교체하여 계산합니다.
+              </p>
+              <button
+                type="button"
+                className="button secondary full"
+                disabled={busy || checkingSafety}
+                onClick={(e) => {
+                  if (e.currentTarget.form?.reportValidity()) void checkSafety();
+                }}
+              >
+                {checkingSafety ? (
+                  <LoaderCircle size={18} className="spin" />
+                ) : (
+                  <FlaskConical size={18} />
+                )}
+                성분 검사
+              </button>
+              {!analysis && (
+                <p className="field-help">입력을 변경했다면 성분 검사를 다시 눌러 주세요.</p>
               )}
+              {analysis && (
+                <div aria-live="polite">
+                  <SafetyResults analysis={analysis} preview />
+                  {analysis.hasExceedance && (
+                    <label className="checkbox-label safety-ack">
+                      <input
+                        type="checkbox"
+                        checked={acknowledged}
+                        onChange={(e) =>
+                          setAcknowledgedSignature(e.target.checked ? signature : "")
+                        }
+                      />
+                      <span>
+                        <strong>내용을 확인했습니다</strong>
+                        <small>
+                          참고 상한선 초과 안내를 확인했으며, 필요한 경우 전문가에게 확인하겠습니다.
+                        </small>
+                      </span>
+                    </label>
+                  )}
+                </div>
+              )}
+            </section>
+            <div className="form-actions">
+              <Link className="button secondary" href="/supplements">
+                취소
+              </Link>
+              <button
+                className="button primary"
+                disabled={
+                  busy || checkingSafety || !analysis || (analysis.hasExceedance && !acknowledged)
+                }
+              >
+                {busy ? <LoaderCircle className="spin" size={17} /> : <Check size={17} />}영양제{" "}
+                {id ? "저장" : "등록"}
+              </button>
             </div>
-          )}
-        </section>
-        <div className="form-actions">
-          <Link className="button secondary" href="/supplements">
-            취소
-          </Link>
-          <button
-            className="button primary"
-            disabled={
-              busy || checkingSafety || !analysis || (analysis.hasExceedance && !acknowledged)
-            }
-          >
-            {busy ? <LoaderCircle className="spin" size={17} /> : <Check size={17} />}영양제{" "}
-            {id ? "저장" : "등록"}
-          </button>
-        </div>
-      </form>
+          </form>
+        </>
+      )}
       {id && (
         <div className="danger-zone">
           {!deleteConfirm ? (
@@ -1896,11 +2021,24 @@ function SurveyResults() {
               <a className="text-link" href={r.sourceUrl} target="_blank" rel="noreferrer">
                 NIH 영양성분 정보 <ArrowUpRight size={15} />
               </a>
+              <Link
+                className="button secondary full"
+                href={`/products?interest=${encodeURIComponent(r.name)}`}
+              >
+                이 성분이 포함된 제품 찾아보기
+                <ArrowRight size={16} />
+              </Link>
             </article>
           ))}
         </div>
       )}
       <div className="results-actions">
+        {results.length > 0 && (
+          <Link className="button primary" href="/products">
+            관심 성분 제품 함께 찾아보기
+            <ArrowRight size={17} />
+          </Link>
+        )}
         <Link className="button primary" href="/supplements/new">
           <Plus size={18} />내 영양제 등록하기
         </Link>
