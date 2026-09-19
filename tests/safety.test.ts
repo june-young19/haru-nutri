@@ -229,8 +229,45 @@ test("edit preview excludes the entire replaced product before adding the new in
 });
 
 test("invalid or incompatible amounts cannot produce an apparently complete within result", () => {
-  for (const amount of [0, -1, NaN, Infinity])
-    assert.equal(one("비타민 C", amount, "mg").status, "unknown");
+  for (const amount of [0, -1, NaN, Infinity]) {
+    const invalidCurrent = one("비타민 C", amount, "mg");
+    assert.equal(invalidCurrent.status, "unknown");
+    assert.equal(invalidCurrent.currentIncomplete, true);
+    assert.equal(invalidCurrent.proposedIncomplete, false);
+  }
+  const missingCandidate = analyzeSafety(
+    [product("current", [{ name: "비타민 D", amount: 25, unit: "μg" }])],
+    30,
+    { name: "함량 미확인 후보", ingredients: [{ name: "비타민 D", amount: 0, unit: "" }] },
+  ).items[0];
+  assert.equal(missingCandidate.status, "unknown");
+  assert.equal(missingCandidate.currentIncomplete, false);
+  assert.equal(missingCandidate.proposedIncomplete, true);
+  assert.deepEqual(missingCandidate.proposedTotals, []);
+  assert.deepEqual(missingCandidate.totals, [{ amount: 25, unit: "μg" }]);
+
+  const missingCurrent = analyzeSafety(
+    [product("current", [{ name: "비타민 D", amount: NaN, unit: "μg" }])],
+    30,
+    { name: "함량 확인 후보", ingredients: [{ name: "비타민 D", amount: 25, unit: "μg" }] },
+  ).items[0];
+  assert.equal(missingCurrent.currentIncomplete, true);
+  assert.equal(missingCurrent.proposedIncomplete, false);
+  assert.deepEqual(missingCurrent.currentTotals, []);
+
+  const noCurrentProduct = analyzeSafety([], 30, {
+    name: "첫 등록 후보",
+    ingredients: [{ name: "비타민 D", amount: 25, unit: "μg" }],
+  }).items[0];
+  assert.equal(noCurrentProduct.status, "within");
+  assert.deepEqual(noCurrentProduct.currentTotals, []);
+  assert.equal(
+    noCurrentProduct.currentIncomplete,
+    false,
+    "no current product is a genuine zero contribution",
+  );
+  assert.equal(noCurrentProduct.proposedIncomplete, false);
+
   const mixed = analyzeSafety(
     [
       product("a", [{ name: "비타민 C", amount: 2000, unit: "mg" }]),

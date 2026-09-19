@@ -12,12 +12,14 @@ const labels = {
   age_required: "나이 입력 필요",
   form_required: "형태·별도 기준 확인 필요",
 };
-function amountText(amounts: UnitAmount[]) {
+function amountText(amounts: UnitAmount[], incomplete = false) {
   return amounts.length
     ? amounts
         .map((a) => `${a.amount.toLocaleString("ko-KR", { maximumFractionDigits: 6 })}${a.unit}`)
-        .join(" / ")
-    : "0";
+        .join(" / ") + (incomplete ? " + 미확인 함량" : "")
+    : incomplete
+      ? "함량 미확인"
+      : "0";
 }
 
 /** Uses the same server-computed analysis on the overview and before saving. */
@@ -73,7 +75,7 @@ export function SafetyResults({
               {item.products.map((product) => (
                 <div key={product.id}>
                   <span className="safety-product-name">{product.name}</span>
-                  <strong>{amountText(product.amounts)}</strong>
+                  <strong>{amountText(product.amounts, !product.amounts.length)}</strong>
                 </div>
               ))}
             </div>
@@ -81,17 +83,25 @@ export function SafetyResults({
               <div className="safety-comparison">
                 <div>
                   <span>현재 등록량</span>
-                  <strong>{amountText(item.currentTotals)}</strong>
+                  <strong>{amountText(item.currentTotals, item.currentIncomplete)}</strong>
                 </div>
                 <div>
                   <span>추가·교체 예정</span>
-                  <strong>{amountText(item.proposedTotals)}</strong>
+                  <strong>{amountText(item.proposedTotals, item.proposedIncomplete)}</strong>
                 </div>
               </div>
             )}
             <div className="duplicate-total">
-              <span>{preview ? "등록 후 총량" : "등록된 영양제 기준 총량"}</span>
-              <strong>{amountText(item.totals)}</strong>
+              <span>
+                {item.currentIncomplete || item.proposedIncomplete
+                  ? "확인 가능한 부분합"
+                  : preview
+                    ? "등록 후 총량"
+                    : "등록된 영양제 기준 총량"}
+              </span>
+              <strong>
+                {amountText(item.totals, item.currentIncomplete || item.proposedIncomplete)}
+              </strong>
             </div>
             {item.reference && (
               <div className="safety-reference">

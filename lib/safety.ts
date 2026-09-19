@@ -18,6 +18,9 @@ export interface SafetyItem {
   status: SafetyStatus;
   reference: ULReference | null;
   message: string;
+  /** Missing quantities make displayed amounts partial sums, never zero doses. */
+  currentIncomplete?: boolean;
+  proposedIncomplete?: boolean;
   /** Source for an explicit no-UL statement; no numeric UL is fabricated. */
   evidence?: ReferenceSource;
 }
@@ -45,6 +48,8 @@ type Group = {
   proposed: Amounts;
   combined: Amounts;
   invalidAmount: boolean;
+  currentIncomplete: boolean;
+  proposedIncomplete: boolean;
 };
 
 const formNames = new Set([
@@ -112,6 +117,8 @@ export function analyzeSafety(
           proposed: new Map(),
           combined: new Map(),
           invalidAmount: false,
+          currentIncomplete: false,
+          proposedIncomplete: false,
         };
         groups.set(key, group);
       }
@@ -122,6 +129,8 @@ export function analyzeSafety(
       }
       if (!Number.isFinite(ingredient.amount) || ingredient.amount <= 0) {
         group.invalidAmount = true;
+        if (isProposed) group.proposedIncomplete = true;
+        else group.currentIncomplete = true;
         continue;
       }
       let { bucket, factor } = normalizedUnit(ingredient.unit);
@@ -134,6 +143,8 @@ export function analyzeSafety(
       const amount = ingredient.amount * factor;
       if (!Number.isFinite(amount)) {
         group.invalidAmount = true;
+        if (isProposed) group.proposedIncomplete = true;
+        else group.currentIncomplete = true;
         continue;
       }
       add(row.amounts, bucket, amount);
@@ -173,6 +184,8 @@ export function analyzeSafety(
         totals: display(group.combined),
         currentTotals: display(group.current),
         proposedTotals: display(group.proposed),
+        currentIncomplete: group.currentIncomplete,
+        proposedIncomplete: group.proposedIncomplete,
         status: "unknown",
         reference,
         message:
