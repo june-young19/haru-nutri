@@ -1533,9 +1533,10 @@ function SupplementEditor({ id }: { id?: string }) {
                       type="time"
                       required
                       value={time}
-                      onChange={(e) =>
-                        setTimes((a) => a.map((v, j) => (j === i ? e.target.value : v)))
-                      }
+                      onChange={(e) => {
+                        const value = e.currentTarget.value;
+                        setTimes((a) => a.map((v, j) => (j === i ? value : v)));
+                      }}
                     />
                   </label>
                 ))}
