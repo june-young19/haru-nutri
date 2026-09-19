@@ -63,6 +63,8 @@ export interface DayHistory {
   items: TodayItem[];
 }
 
+export type EmailMode = "capture" | "brevo";
+
 export interface Settings {
   name: string;
   age: number | null;
@@ -74,7 +76,7 @@ export interface Settings {
   guardianEnabled: boolean;
   guardianConsentedAt: string | null;
   timezone: string;
-  emailMode: string;
+  emailMode: EmailMode;
 }
 
 export interface UnitAmount {

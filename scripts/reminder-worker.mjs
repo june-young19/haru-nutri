@@ -79,15 +79,14 @@ export function startReminderWorker(config, options = {}) {
       } else {
         const result = await response.json();
         if (!result?.data || typeof result.data !== "object") throw new Error("Invalid response");
+        if (!["capture", "brevo"].includes(result.data.mode)) throw new Error("Invalid email mode");
         const counts = Object.fromEntries(
           ["checked", "sent", "captured", "failed", "skipped"].map((key) => [
             key,
             Number.isSafeInteger(result.data[key]) && result.data[key] >= 0 ? result.data[key] : 0,
           ]),
         );
-        const mode = ["capture", "resend"].includes(result.data.mode)
-          ? result.data.mode
-          : "unknown";
+        const mode = result.data.mode;
         logger.log(
           `[reminders] ${new Date().toISOString()} ${JSON.stringify({ mode, ...counts })}`,
         );

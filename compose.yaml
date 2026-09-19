@@ -5,6 +5,8 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
+      EMAIL_MODE: ${EMAIL_MODE:?Set EMAIL_MODE to brevo or capture in .env}
+      EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-하루영양}
       DATABASE_PATH: /app/data/haru.db
       HOSTNAME: 0.0.0.0
       PORT: 3000
@@ -30,6 +32,7 @@ services:
     restart: unless-stopped
     command: ["node", "scripts/reminder-worker.mjs"]
     environment:
+      # Only the web service receives the Brevo key and sender configuration.
       APP_URL: http://app:3000
       CRON_SECRET: ${CRON_SECRET:?Set CRON_SECRET in .env before running Docker Compose}
     depends_on:

@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS notification_logs (
  recipient TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL,
  provider_id TEXT, error TEXT, created_at TEXT NOT NULL, sent_at TEXT,
  claimed_at TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 1,
+ retryable INTEGER NOT NULL DEFAULT 0 CHECK(retryable IN (0,1)),
  UNIQUE(schedule_id,date,channel)
 );
 CREATE INDEX IF NOT EXISTS notifications_user ON notification_logs(user_id,created_at);
@@ -80,7 +81,7 @@ export function getDb(): DatabaseSync {
   database.exec("BEGIN IMMEDIATE");
   try {
     const version = database.prepare("PRAGMA user_version").get() as { user_version: number };
-    if (version.user_version > 2)
+    if (version.user_version > 3)
       throw new Error("This database needs a newer version of Haru Nutri.");
     database.exec(schema);
     const columns = database.prepare("PRAGMA table_info(users)").all() as { name: string }[];
@@ -93,7 +94,16 @@ export function getDb(): DatabaseSync {
       database.exec(
         "ALTER TABLE users ADD COLUMN age INTEGER CHECK(age IS NULL OR (typeof(age)='integer' AND age BETWEEN 1 AND 120))",
       );
-    database.exec("PRAGMA user_version = 2; COMMIT;");
+    const notificationColumns = database.prepare("PRAGMA table_info(notification_logs)").all() as {
+      name: string;
+    }[];
+    // v2 -> v3 preserves every log. Old failed/unfinished requests have an unknown
+    // delivery outcome, so switching providers must never automatically replay them.
+    if (!notificationColumns.some((column) => column.name === "retryable"))
+      database.exec(
+        "ALTER TABLE notification_logs ADD COLUMN retryable INTEGER NOT NULL DEFAULT 0 CHECK(retryable IN (0,1))",
+      );
+    database.exec("PRAGMA user_version = 3; COMMIT;");
   } catch (error) {
     database.exec("ROLLBACK");
     database.close();

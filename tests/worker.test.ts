@@ -124,6 +124,56 @@ test("worker does not overlap slow scans and shutdown aborts an active request",
   assert.equal(capture.messages.length, 0);
 });
 
+test("worker accepts Brevo results while keeping provider credentials and recipients out of logs", async () => {
+  const capture = output();
+  const worker = startReminderWorker(config, {
+    logger: capture.logger,
+    fetchFn: async () =>
+      success({
+        mode: "brevo",
+        captured: 0,
+        sent: 2,
+        apiKey: "private-provider-key",
+        recipient: "private@example.test",
+      }),
+  });
+  try {
+    await waitFor(() => capture.messages.length === 1);
+    assert.match(capture.messages[0], /"mode":"brevo"/);
+    assert.match(capture.messages[0], /"sent":2/);
+    assert.match(capture.messages[0], /"captured":0/);
+    assert.ok(!capture.messages[0].includes("private-provider-key"));
+    assert.ok(!capture.messages[0].includes("private@example.test"));
+  } finally {
+    await worker.stop();
+  }
+});
+
+test("worker rejects missing or unsupported provider modes without silently treating them as capture", async () => {
+  const capture = output();
+  let calls = 0;
+  const worker = startReminderWorker(config, {
+    logger: capture.logger,
+    intervalMs: 5,
+    fetchFn: async () => {
+      calls += 1;
+      if (calls === 1) return success({ mode: undefined });
+      if (calls === 2) return success({ mode: "private-unsupported-provider" });
+      return success({ mode: "brevo", sent: 1, captured: 0 });
+    },
+  });
+  try {
+    await waitFor(() => capture.messages.length >= 3);
+    assert.match(capture.messages[0], /Request failed/);
+    assert.match(capture.messages[1], /Request failed/);
+    assert.match(capture.messages[2], /"mode":"brevo"/);
+    assert.ok(!capture.messages.join().includes("private-unsupported-provider"));
+    assert.ok(!capture.messages.slice(0, 2).join().includes('"captured":1'));
+  } finally {
+    await worker.stop();
+  }
+});
+
 test("worker retries a failed HTTP scan on a later tick and hides the error body", async () => {
   const capture = output();
   let calls = 0;

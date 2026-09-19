@@ -2,11 +2,11 @@
 
 오늘의 영양제, 가볍게 챙기는 나의 루틴.
 
-하루영양은 영양제 등록, 시간별 복용 체크, 성분 중복 확인, 복용 기록과 이메일 알림을 연결한 해커톤용 웹서비스입니다. 회원가입부터 데이터 저장까지 로컬에서 실제로 동작합니다. 외부 서비스 계정이 없어도 실행할 수 있고, Resend를 연결하면 실제 이메일을 발송할 수 있습니다.
+하루영양은 영양제 등록, 시간별 복용 체크, 성분 중복 확인, 복용 기록과 이메일 알림을 연결한 해커톤용 웹서비스입니다. 회원가입부터 데이터 저장까지 로컬에서 실제로 동작합니다. 외부 서비스 계정 없이 캡처 모드로 실행하거나, Brevo Transactional Email API를 연결해 실제 이메일을 발송할 수 있습니다.
 
 [실행 중인 서비스](https://haru-nutri-production.up.railway.app) · [GitHub 저장소](https://github.com/june-young19/haru-nutri) · [외부 배포 가이드](docs/DEPLOYMENT.md) · [시연 가이드](docs/DEMO.md)
 
-Railway에 웹과 알림 워커를 배포했습니다. 공개 HTTPS 주소에서 실제 회원가입·영양제 저장·복용 완료·계정 분리와 웹 재시작 후 데이터 보존을 확인했습니다. 실제 자동 알림 1통의 발송, Resend `Delivered`, Gmail 서버 수락과 **사용자 본인의 실제 Gmail 수신 확인**까지 완료했습니다.
+Railway에 웹과 알림 워커를 배포했습니다. 공개 HTTPS 주소에서 회원가입·영양제 저장·복용 완료·계정 분리와 웹 재시작 후 데이터 보존을 확인했습니다. 현재 이메일 공급자를 Brevo로 전환하는 작업은 별도 검증 단계입니다. **Brevo의 본인·외부 수신자·보호자 실제 메일 수신은 아직 확인하지 않았습니다.** 최신 범위는 [검증 기록](docs/VERIFICATION.md)에 구분합니다.
 
 **설문과 성분 안내는 생활습관을 돌아보기 위한 참고 정보입니다. 의학적 진단·치료·복용 처방을 제공하지 않으며, 성분 중복 자체를 위험하다고 판단하지 않습니다.**
 
@@ -26,7 +26,7 @@ Railway에 웹과 알림 워커를 배포했습니다. 공개 HTTPS 주소에서
 - 제품 삭제 즉시 오늘의 일정·진행률·성분 분석에서 제외, 기존 기록은 보관
 - 최근 날짜별 복용 기록과 연속 완료 기록
 - 본인 알림, 별도 동의한 보호자 알림, 알림 내역 확인
-- 실제 Resend 이메일 모드와 외부 전송 없는 로컬 캡처 모드
+- Brevo 실제 이메일 모드와 외부 전송 없는 명시적 로컬 캡처 모드
 - PC·모바일 반응형 화면, 비어 있는 계정에서도 시작할 수 있는 안내
 
 사진 인식, 바코드 검색, AI 챗봇은 포함하지 않습니다. 설문은 명시적인 규칙으로 결과를 만드는 방식이며, 생성형 AI나 임상 진단 모델로 소개하지 않습니다.
@@ -39,7 +39,7 @@ Railway에 웹과 알림 워커를 배포했습니다. 공개 HTTPS 주소에서
 | 스타일    | Tailwind CSS 4, CSS, Lucide 아이콘                            |
 | 인증      | 서버의 scrypt 비밀번호 해시, 서버 세션, HttpOnly 쿠키         |
 | 데이터    | SQLite, Node.js 내장 `node:sqlite`                            |
-| 이메일    | Resend HTTP API 또는 로컬 DB 캡처                             |
+| 이메일    | Brevo Transactional Email HTTP API 또는 로컬 DB 캡처          |
 | 예약 실행 | 별도 Node.js 워커 → 인증된 알림 API를 매분 호출               |
 | 배포      | Docker, 영구 디스크를 제공하는 단일 서버                      |
 | 검증      | TypeScript, Node 테스트 러너, API 통합 테스트, GitHub Actions |
@@ -74,7 +74,7 @@ cp .env.example .env
 Copy-Item .env.example .env
 ```
 
-API Key 없이 시연하려면 복사한 `.env`에서 **`EMAIL_MODE=capture`로 변경**합니다. `.env.example`의 `EMAIL_MODE=resend`, 빈 `RESEND_API_KEY`, 빈 `EMAIL_FROM`은 실제 이메일 연결을 위한 자리이며, 그대로는 실제 이메일을 발송할 수 없습니다.
+API Key 없이 시연하려면 복사한 `.env`에서 **`EMAIL_MODE=capture`로 변경**합니다. `.env.example`의 `EMAIL_MODE=brevo`, 빈 `BREVO_API_KEY`, 빈 `EMAIL_FROM`은 실제 이메일 연결을 위한 자리이며, 그대로는 실제 이메일을 발송할 수 없습니다. 모드를 비우거나 잘못 설정하면 알림 처리가 실패하며, 자동으로 캡처 모드로 전환하지 않습니다.
 
 ```bash
 pnpm dev
@@ -88,16 +88,17 @@ pnpm dev
 
 값은 프로젝트 루트의 `.env` 또는 배포 서비스의 환경변수 설정에 넣습니다. `.env`, SQLite DB, 빌드 결과와 의존성 폴더는 Git에 올리지 않습니다. 시크릿을 `NEXT_PUBLIC_` 변수로 만들지 마세요.
 
-| 변수             | 로컬 예시               | 설명                                                       |
-| ---------------- | ----------------------- | ---------------------------------------------------------- |
-| `APP_URL`        | `http://localhost:3000` | 브라우저에서 접속할 앱의 기준 주소. 운영은 `https://` 주소 |
-| `DATABASE_PATH`  | `./data/haru.db`        | SQLite 파일 위치. 운영에서는 영구 디스크의 절대 경로       |
-| `EMAIL_MODE`     | `capture`               | `capture` 또는 `resend`                                    |
-| `RESEND_API_KEY` | 빈 값                   | `resend`일 때 발급받은 서버 전용 키                        |
-| `EMAIL_FROM`     | 빈 값                   | 실제 발송 시 `하루영양 <reminder@검증한도메인>`으로 설정   |
-| `CRON_SECRET`    | 직접 생성               | 알림 워커와 서버가 공유하는 충분히 긴 임의 문자열          |
-| `TRUST_PROXY`    | `false`                 | 신뢰하는 프록시가 IP 헤더를 덮어쓸 때만 `true`로 변경      |
-| `TZ`             | `Asia/Seoul`            | 프로세스 시간대. 앱 일정은 별도로 한국 시간에 고정         |
+| 변수              | 로컬 예시               | 설명                                                       |
+| ----------------- | ----------------------- | ---------------------------------------------------------- |
+| `APP_URL`         | `http://localhost:3000` | 브라우저에서 접속할 앱의 기준 주소. 운영은 `https://` 주소 |
+| `DATABASE_PATH`   | `./data/haru.db`        | SQLite 파일 위치. 운영에서는 영구 디스크의 절대 경로       |
+| `EMAIL_MODE`      | `capture`               | 로컬 `capture` 또는 실제 발송 `brevo`; 반드시 명시         |
+| `BREVO_API_KEY`   | 빈 값                   | Brevo에서 발급한 서버 전용 API Key. SMTP Key와 다름        |
+| `EMAIL_FROM`      | 빈 값                   | Brevo에 등록·확인한 단일 이메일 주소. 이름·꺾쇠 없이 입력  |
+| `EMAIL_FROM_NAME` | `하루영양`              | 이메일에 표시할 발신자 이름                                |
+| `CRON_SECRET`     | 직접 생성               | 알림 워커와 서버가 공유하는 충분히 긴 임의 문자열          |
+| `TRUST_PROXY`     | `false`                 | 신뢰하는 프록시가 IP 헤더를 덮어쓸 때만 `true`로 변경      |
+| `TZ`              | `Asia/Seoul`            | 프로세스 시간대. 앱 일정은 별도로 한국 시간에 고정         |
 
 다음 명령으로 시크릿을 생성하고 출력값을 `.env`의 `CRON_SECRET=` 뒤에 붙여 넣습니다.
 
@@ -105,7 +106,7 @@ pnpm dev
 node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
 ```
 
-**Supabase 설정은 필요 없습니다.** 이 버전은 Supabase Auth·DB를 사용하지 않습니다. 로컬 회원가입·저장에는 어떤 외부 API Key도 필요하지 않고, 실제 이메일 발송에만 Resend 계정과 발신자 설정이 필요합니다.
+**Supabase 설정은 필요 없습니다.** 이 버전은 Supabase Auth·DB를 사용하지 않습니다. 로컬 회원가입·저장에는 외부 API Key가 필요하지 않고, 실제 이메일 발송에만 Brevo 계정과 발신자 설정이 필요합니다.
 
 `.env`를 바꾸면 개발 서버와 워커를 재시작합니다. 워커는 `.env`를 읽으며, Next.js 전용 `.env.local`만 사용하는 경우 워커에는 값이 전달되지 않습니다.
 
@@ -142,7 +143,7 @@ erDiagram
 
 이름·나이 도입 전 DB도 삭제하거나 새로 가입할 필요가 없습니다. 서버가 기존 `nickname` 데이터를 `name`으로 이전하고 기존 계정의 `age`는 `NULL`로 둡니다. 로그인·영양제·성분·일정·복용 기록은 유지합니다. 기존 사용자에게 나이를 임의로 추정해 넣지 않으며, 설정에서 나이를 입력하기 전에는 연령별 비교가 필요한 항목을 “나이 입력 필요”로 안내합니다.
 
-운영 DB 업그레이드는 앱과 워커를 정상 종료하고 아래의 백업 절차를 완료한 뒤 실행하세요. 스키마 버전은 SQLite `user_version=2`이며, 열 이름 변경과 나이 추가를 하나의 트랜잭션에서 수행합니다. 변경 후 구버전 서버는 이전 열 이름을 사용할 수 없으므로 구·신버전 서버를 같은 DB에 동시에 실행하지 않습니다. 업데이트 후 기존 계정으로 로그인해 이름·영양제·완료 기록을 확인하고 나이를 입력합니다. 나이는 생년월일에서 자동 증가하는 값이 아니므로 설정에서 직접 갱신합니다.
+운영 DB 업그레이드는 앱과 워커를 정상 종료하고 아래의 백업 절차를 완료한 뒤 실행하세요. 이름·나이 변경은 스키마 버전 2에서 트랜잭션으로 수행합니다. Brevo 전환의 버전 3은 알림의 자동 재시도 가능 여부를 저장하는 열만 추가하며 기존 계정·영양제·완료 기록·알림 이력을 초기화하지 않습니다. 이전 실패 기록은 자동 재발송 대상으로 승격하지 않습니다. 구·신버전 서버를 같은 DB에 동시에 실행하지 않습니다. 업데이트 후 기존 계정으로 로그인해 이름·영양제·완료 기록을 확인하고 나이를 입력합니다. 나이는 생년월일에서 자동 증가하는 값이 아니므로 설정에서 직접 갱신합니다.
 
 ### 시간과 함량의 의미
 
@@ -196,25 +197,42 @@ pnpm reminders
 
 기본 유예 시간은 예정 시간 후 본인 30분, 본인 알림 처리 후 보호자 120분이며 설정 화면에서 바꿀 수 있습니다. 자정을 넘기는 알림도 처리합니다. 본인 알림은 예정 시각으로부터 24시간 이내, 보호자 후속 알림은 기존 본인 알림을 기준으로 예정 시각으로부터 최대 52시간 이내에 처리합니다. 오래된 미확인 일정을 무한히 재발송하지 않습니다. 최근 7일 동안 실제로 존재했던 자신의 일정은 복용 기록 화면에서 빠뜨린 체크를 보완할 수 있습니다. 저장 시각은 실제 섭취 시각을 추정하지 않고 체크한 시각으로 남습니다.
 
-### B. 실제 Resend 발송
+### B. Brevo 계정·발신자·키 설정
 
-1. [Resend](https://resend.com) 계정을 만들고 [API Keys](https://resend.com/api-keys)에서 발송용 키를 발급합니다. [공식 키 관리 안내](https://resend.com/docs/dashboard/api-keys/introduction)
-2. 실제 사용자와 보호자에게 보내려면 소유한 도메인을 등록하고 안내된 DNS 레코드를 추가해 검증합니다. `EMAIL_FROM`을 그 도메인의 주소로 설정합니다. 테스트 발신자 `onboarding@resend.dev`에는 수신자 제한이 있으므로 모든 주소에 보낼 수 있다고 가정하지 마세요. [도메인 검증](https://resend.com/docs/dashboard/domains/introduction)
-3. 환경변수를 바꾸고 앱과 워커를 재시작합니다.
+1. [Brevo](https://www.brevo.com)에 가입하고 계정 확인을 마칩니다. Transactional 메뉴에서 발송 기능을 사용할 수 있는지 확인합니다. 계정 검토나 제한 안내가 있으면 이를 먼저 해결합니다.
+2. Settings → Senders, Domains, IPs → Senders → Add a sender에서 이름 `하루영양`과 본인이 접근할 수 있는 발신 이메일을 등록합니다. 도메인을 인증하지 않은 경우 해당 메일로 온 6자리 코드를 입력해 발신자를 확인합니다. [발신자 등록 안내](https://help.brevo.com/hc/en-us/articles/208836149-Create-a-new-sender-From-name-and-From-email)
+3. Settings → SMTP & API → API Keys & MCP → Generate new API key에서 전용 키를 생성합니다. **SMTP Key가 아닌 API Key**를 사용합니다. 전체 값은 생성 시에만 표시되므로 비밀 저장소에 저장하고 채팅·화면 캡처·Git에 넣지 않습니다. [API Key 관리](https://help.brevo.com/hc/en-us/articles/209467485-Create-and-manage-your-API-keys)
+4. 로컬 `.env` 또는 Railway **웹 서비스** Variables에 아래 항목을 설정합니다. 빈 칸에 실제 값을 비공개로 입력합니다. `EMAIL_FROM`에는 `이름 <주소>` 형식 대신 등록한 이메일 주소만 넣습니다.
 
 ```dotenv
-EMAIL_MODE=resend
-RESEND_API_KEY=re_YOUR_REAL_KEY
-EMAIL_FROM="하루영양 <reminder@YOUR_VERIFIED_DOMAIN>"
-APP_URL=https://YOUR_APP_DOMAIN
+EMAIL_MODE=brevo
+BREVO_API_KEY=
+EMAIL_FROM=
+EMAIL_FROM_NAME=하루영양
+APP_URL=https://haru-nutri-production.up.railway.app
 ```
 
-4. 사용자 설정에서 본인 이메일 알림을 활성화하고 미확인 일정을 준비합니다.
-5. 유예 시간이 지난 후 앱의 알림 로그, Resend 대시보드, 실제 받은편지함까지 확인합니다. 발송 API가 요청을 수락해도 스팸 분류 등으로 실제 도착이 다를 수 있습니다.
+5. 로컬 앱·워커를 재시작하거나 Railway 웹·워커를 같은 버전으로 재배포합니다. 워커에는 Brevo 키가 필요하지 않으며 `APP_URL`과 `CRON_SECRET`으로 웹의 알림 API만 호출합니다.
 
-프로젝트는 서버에서 Resend 이메일 API를 사용합니다. 키를 브라우저에 전달하지 않습니다. [Resend 발송 API](https://resend.com/docs/api-reference/emails/send-email)
+#### 도메인을 구매하지 않는 해커톤 설정
 
-캡처된 일정·날짜의 알림은 모드를 `resend`로 바꿔도 다시 발송하지 않으며, 캡처된 본인 알림을 근거로 보호자에게 실제 이메일을 보내지 않습니다. 실제 발송 점검에는 새로 만든 일정 또는 다음 날짜의 일정을 사용하세요.
+본인 Gmail 주소를 발신자로 등록·확인해 시작할 수 있습니다. Gmail의 DNS를 소유한 것이 아니므로 Gmail 도메인을 직접 인증했다고 표시하지 않습니다. Brevo는 무료 또는 인증되지 않은 발신 도메인을 사용하는 **트랜잭션 메일의 발신 주소를 `이름@계정번호.t-sender-sib.com` 형태로 임시 대체**한다고 안내합니다. 원래 Gmail 주소가 받는 사람에게 그대로 표시된다고 보장하지 말고 실제 수신 메일의 From을 확인하세요. 이 대체 기능은 영구 보장된 방식이 아니며 장기 운영에는 소유 도메인의 인증을 권장합니다. [발신자 요구 사항과 임시 대체 주소](https://help.brevo.com/hc/en-us/articles/14925263522578-Comply-with-Gmail-Yahoo-and-Microsoft-s-requirements-for-email-senders)
+
+이 구성은 본인 주소 외 수신자에게도 보내기 위한 방식입니다. 다만 계정 승인·발신자 확인·IP 제한·잔여 발송량·실제 전달 결과는 각 배포에서 확인해야 합니다. 본인 수신 성공만으로 일반 Gmail·Naver 사용자나 보호자의 수신 성공을 선언하지 않습니다.
+
+#### 무료 한도와 IP 제한
+
+2026-09-19 공식 안내 기준 Free 플랜은 **하루 300통**, 미사용량 이월 없음입니다. 한도 초과 트랜잭션 메일은 최대 1,000통까지 대기열에 들어갈 수 있어 API 접수와 즉시 전달이 다를 수 있습니다. Free 메일에는 Brevo 브랜딩이 포함됩니다. 발표 전에 계정의 실제 잔여량과 최신 조건을 확인하세요. [Free 플랜 제한](https://help.brevo.com/hc/en-us/articles/208580669-FAQs-What-are-the-limits-of-the-Free-plan)
+
+Settings → Security → Authorized IPs에서 API IP 제한을 확인합니다. Brevo는 새 IP가 30일 동안 추가되지 않으면 알 수 없는 IP 차단을 자동 활성화할 수 있습니다. Railway의 발신 IP가 바뀌면 요청이 차단될 수 있으므로, 계정 알림에서 해당 요청이 자신의 서버에서 발생했는지 확인한 뒤 필요한 IP만 승인합니다. 키 오류처럼 보인다고 보안 제한을 모두 해제하지 않습니다. [공식 IP 제한 안내](https://help.brevo.com/hc/en-us/articles/5740111683858-Authorize-and-block-IP-addresses-for-API-and-SMTP-security)
+
+#### 실제 발송과 수신 확인
+
+사용자 설정에서 본인 알림을 켜고 새 미확인 일정을 준비합니다. 워커가 유예 시간 이후 검사하면 서버에서 `POST https://api.brevo.com/v3/smtp/email`을 호출합니다. 인증은 `api-key` 헤더이며 `sender`, `to`, `subject`, `htmlContent`/`textContent`를 전달합니다. 정상 접수는 HTTP 201의 `messageId`로 확인합니다. API Key는 브라우저에 전달하지 않습니다. [Brevo 발송 API](https://developers.brevo.com/reference/send-transac-email)
+
+앱의 `sent`는 API 요청 접수 상태입니다. Brevo Transactional → Logs에서 해당 시간·제목의 이벤트를 확인하고, `Delivered`와 `Deferred`·`Blocked`·오류를 구분합니다. `Delivered`는 수신 서버로 전달되었다는 뜻이며 받은편지함 도착 보장은 아닙니다. 본인, Brevo 계정과 무관한 외부 Gmail/Naver 수신자, 명시적으로 동의한 보호자 각각의 실제 메일함도 확인합니다. Gmail에서는 올바른 계정을 선택한 뒤 `in:anywhere 하루영양` 검색으로 전체 폴더를 확인할 수 있습니다. 스팸·프로모션 등 분류 위치는 직접 확인한 경우에만 기록합니다. [트랜잭션 로그 확인](https://help.brevo.com/hc/en-us/articles/360021533839-Manage-your-transactional-logs-and-email-previews), [이벤트 의미](https://help.brevo.com/hc/en-us/articles/35699922048146-View-and-export-your-event-logs)
+
+실제 API 오류·시간 초과·잘못된 설정을 캡처 성공으로 바꾸는 fallback은 없습니다. 캡처 시연은 운영 발송과 구분된 환경에서 `EMAIL_MODE=capture`를 명시한 경우에만 사용합니다. 이미 캡처된 일정·날짜는 `brevo`로 바꿔 다시 발송하지 않으며, 캡처된 본인 알림은 실제 보호자 알림의 근거가 되지 않습니다. 전송 점검에는 새 일정 또는 다음 날짜 일정을 사용하세요. 시연 후 테스트 제품을 삭제하고 본인 유예 시간은 기본 30분으로 되돌립니다.
 
 ### 보호자 동의와 실행 순서
 
@@ -237,7 +255,7 @@ Authorization: Bearer YOUR_CRON_SECRET
 
 시크릿은 URL 쿼리나 공개 저장소에 쓰지 않고 스케줄러의 비밀 설정으로 전달합니다. 로그인한 사용자의 UI 시연용 API는 `POST /api/notifications/preview`이며, 전체 사용자용 cron 권한과 구분됩니다.
 
-이 UI 동작도 실제 시간·유예 시간·동의를 검사하는 동일한 알림 엔진을 실행합니다. 시간을 강제로 넘기지 않으며 `resend` 모드에서는 조건을 만족하면 실제 이메일이 발송됩니다.
+이 UI 동작도 실제 시간·유예 시간·동의를 검사하는 동일한 알림 엔진을 실행합니다. 시간을 강제로 넘기지 않으며 `brevo` 모드에서는 조건을 만족하면 실제 이메일이 발송됩니다.
 
 ## 7. 화면과 프로젝트 구조
 
@@ -298,13 +316,13 @@ pnpm start
 
 ### 검증 범위
 
-검증일 2026-09-19: **자동 테스트 62개**(도메인 10·UL 12·서버 34·워커 6), 확장된 실제 HTTP 통합 **7개 그룹**, TypeScript 검사, lockfile 기준 설치와 **최종 운영 빌드**를 통과했습니다. HTTP 검사에는 서버에서의 보호 페이지 접근 제한, 로그아웃·만료 세션, 두 계정 사이의 데이터 분리도 포함됩니다. 브라우저에서는 이름·나이 가입, 합산 미리보기·초과 확인, 완료 제품 삭제, 새로고침·프로필 유지와 390px 모바일 화면을 확인했습니다. 자세한 실행 조건과 범위는 [검증 기록](docs/VERIFICATION.md)을 참고하세요.
+2026-09-19 **Brevo 변경분을 포함한 자동 테스트 73개**(도메인 10·UL 12·서버 38·이메일 공급자 5·워커 8), capture 모드의 실제 HTTP 통합 7개 그룹, TypeScript 검사, lockfile 설치와 최종 운영 빌드를 통과했습니다. 로컬 실행 환경의 프로세스 제한에 따른 실행 방식은 [검증 기록](docs/VERIFICATION.md)에 남겼습니다. 코드 전환은 완료했지만 Brevo의 운영 변수 적용·재배포·실제 이메일 전달은 아직 검증하지 않았습니다.
 
-GitHub Actions에서는 표준 `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm test`, `pnpm test:integration`, `pnpm build`가 **모두 성공**했습니다. [CI 실행 결과](https://github.com/june-young19/haru-nutri/actions/runs/35424692457) 로컬 Windows 에이전트 환경의 `spawn EPERM` 제약에서는 같은 테스트를 컴파일하고 프로세스 격리를 끄는 방식으로도 62개를 통과했습니다.
+전환 전 GitHub Actions에서는 표준 `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm test`, `pnpm test:integration`, `pnpm build`가 모두 성공했습니다. [당시 CI 실행 결과](https://github.com/june-young19/haru-nutri/actions/runs/35424692457) 로컬 Windows 에이전트 환경의 `spawn EPERM` 제약에서는 같은 테스트를 컴파일하고 프로세스 격리를 끄는 방식으로도 62개를 통과했습니다.
 
 공개 GitHub 저장소에 소스를 업로드했고 Railway에서 실제 Docker 빌드·웹 서비스·알림 워커 실행을 확인했습니다. 웹에는 `/app/data`의 500MB 영구 볼륨을 연결했습니다. 공개 HTTPS에서 별도 검증 3개 그룹을 통과해 가입, 20+25=45μg 합산·저장, 복용 완료·삭제 이력, 두 계정과 보호자 정보 분리, 로그아웃 세션 무효화·재로그인을 확인했습니다. 웹을 실제 재시작한 뒤 기존 세션·프로필·제품·복용 이력이 유지되는 것도 확인했습니다. 390px 모바일 대시보드·설정의 가로 넘침도 없었습니다.
 
-현재 배포는 교체한 새 키와 `resend` 모드를 사용합니다. 2026-09-19 14:59 한국 시간에 실제 워커가 자동 알림 1통을 발송했고 Resend의 `Sent`·`Delivered`와 Gmail SMTP `250` 수락 응답을 확인했습니다. 다음 주기에는 같은 알림을 건너뛰어 추가 발송이 없었습니다. 이메일에 실제 공개 주소와 등록 일정이 포함된 것도 확인했습니다. **사용자가 Gmail 전체 검색으로 해당 메일을 찾아 실제 수신을 확인했습니다.** 어느 폴더에 분류되었는지는 확인하지 않았습니다. 시연 제품을 삭제한 뒤 실제 워커 검사 대상도 0건이 되는 것을 확인했습니다. 현재 Resend 테스트 발신자는 계정 본인 이메일에만 전송할 수 있습니다. 소스와 문서에 개인 이름·수신자 주소·API Key를 포함하지 않습니다.
+이전 버전에서 확인한 자동 이메일 전달·수신은 Brevo 검증에 포함하지 않습니다. 현재 Brevo 계정·API Key 연결, 운영 변수 적용과 배포, API 접수, 공급자 전달, 본인·외부 수신자·보호자의 실제 수신 확인이 남아 있습니다. 키 없이 Brevo 모드로 배포하면 앱 기능은 사용할 수 있지만 알림 API는 설정 오류를 반환합니다. 개인 이름·수신자 주소·API Key는 소스와 공개 검증 기록에 포함하지 않습니다.
 
 ## 9. 배포
 
@@ -332,7 +350,7 @@ Docker 이미지는 Next.js `standalone` 산출물과 정적 에셋을 복사하
 1. 같은 GitHub 저장소로 Docker Web 서비스와 알림 Worker 서비스를 생성합니다.
 2. 웹 시작 명령은 `node server.js`, 워커는 `node scripts/reminder-worker.mjs`로 설정합니다.
 3. 웹에만 `/app/data` 영구 볼륨을 연결하고 `DATABASE_PATH=/app/data/haru.db`, `RAILWAY_RUN_UID=0`을 설정합니다. [Railway 볼륨·권한 안내](https://docs.railway.com/volumes)
-4. 웹 공개 HTTPS 도메인을 양쪽 `APP_URL`로 사용하고 `CRON_SECRET`을 동일하게 설정합니다. Resend 변수는 웹에만 설정합니다.
+4. 웹 공개 HTTPS 도메인을 양쪽 `APP_URL`로 사용하고 `CRON_SECRET`을 동일하게 설정합니다. `EMAIL_MODE=brevo`, `BREVO_API_KEY`, `EMAIL_FROM`, `EMAIL_FROM_NAME`은 웹에만 설정합니다.
 5. 웹 Healthcheck는 `/api/health`, 포트 3000, 인스턴스는 각각 1개입니다. 자동 수면을 끄고 플랜에서 지원하는 재시작 정책을 설정합니다.
 6. 재배포 후 계정·제품·복용 기록 유지와 자동 알림을 실제로 확인합니다.
 
@@ -342,7 +360,7 @@ Railway의 기존 `railway.json` / `railway.toml` Config as Code는 새 서비�
 
 1. GitHub 저장소에서 Docker Web Service를 만듭니다.
 2. `/app/data`에 Persistent Disk를 연결합니다. Render의 영구 디스크는 유료 서비스에 제공되므로 무료 Web Service의 임시 파일시스템을 운영 DB로 사용하지 않습니다. [Render 디스크 안내](https://render.com/docs/disks)
-3. `DATABASE_PATH=/app/data/haru.db`, 공개 HTTPS `APP_URL`, `EMAIL_MODE`, `CRON_SECRET`과 필요한 Resend 변수를 설정합니다. 마운트 디렉터리에 컨테이너 실행 사용자의 쓰기 권한을 확인합니다.
+3. `DATABASE_PATH=/app/data/haru.db`, 공개 HTTPS `APP_URL`, `EMAIL_MODE=brevo`, `CRON_SECRET`과 Brevo 발송 변수를 설정합니다. 마운트 디렉터리에 컨테이너 실행 사용자의 쓰기 권한을 확인합니다.
 4. 같은 Docker 이미지 기반 Background Worker를 추가하고 시작 명령을 `node scripts/reminder-worker.mjs`로 지정합니다. 공개 앱 URL과 시크릿을 전달합니다.
 5. Web 서비스만 DB를 읽고 씁니다. Worker는 HTTP로 요청하므로 두 서비스가 디스크를 공유할 필요가 없습니다.
 
@@ -382,15 +400,15 @@ git push -u origin main
 
 ## 13. 문제 해결
 
-| 증상                              | 확인할 내용                                                                   |
-| --------------------------------- | ----------------------------------------------------------------------------- |
-| `node:sqlite`를 찾을 수 없음      | `node --version`이 22.13 이상인지 확인하고 Node.js 22 최신 패치 사용          |
-| `SQLITE_CANTOPEN` 또는 권한 오류  | DB 상위 디렉터리 쓰기 권한과 볼륨 경로 확인                                   |
-| 알림이 오지 않음                  | 본인 알림 동의, 일정·유예 시간, 미완료 상태, 워커 실행, 양쪽 시크릿 일치 확인 |
-| 캡처 내역은 있지만 메일이 없음    | `EMAIL_MODE=capture`는 외부 이메일을 보내지 않음                              |
-| Resend 발송 실패                  | 키, 검증된 발신자 도메인, 테스트 수신자 제한, API 로그 확인                   |
-| 배포 후 데이터가 사라짐           | `DATABASE_PATH`가 영구 볼륨 내부인지 확인                                     |
-| 운영에서 로그인이 유지되지 않음   | HTTPS 사용 및 올바른 `APP_URL` 확인                                           |
-| 타입 검사에서 생성 타입 경로 문제 | 의존성 설치 후 `pnpm build`를 실행하고 타입 검사 재시도                       |
+| 증상                              | 확인할 내용                                                                         |
+| --------------------------------- | ----------------------------------------------------------------------------------- |
+| `node:sqlite`를 찾을 수 없음      | `node --version`이 22.13 이상인지 확인하고 Node.js 22 최신 패치 사용                |
+| `SQLITE_CANTOPEN` 또는 권한 오류  | DB 상위 디렉터리 쓰기 권한과 볼륨 경로 확인                                         |
+| 알림이 오지 않음                  | 본인 알림 동의, 일정·유예 시간, 미완료 상태, 워커 실행, 양쪽 시크릿 일치 확인       |
+| 캡처 내역은 있지만 메일이 없음    | `EMAIL_MODE=capture`는 외부 이메일을 보내지 않음                                    |
+| Brevo 발송 실패                   | API Key와 SMTP Key 구분, 발신자 확인, 계정·IP 제한, 잔여량, Transactional Logs 확인 |
+| 배포 후 데이터가 사라짐           | `DATABASE_PATH`가 영구 볼륨 내부인지 확인                                           |
+| 운영에서 로그인이 유지되지 않음   | HTTPS 사용 및 올바른 `APP_URL` 확인                                                 |
+| 타입 검사에서 생성 타입 경로 문제 | 의존성 설치 후 `pnpm build`를 실행하고 타입 검사 재시도                             |
 
-참고: [Next.js 배포 출력](https://nextjs.org/docs/app/api-reference/config/next-config-js/output), [Node.js SQLite](https://nodejs.org/download/release/v22.13.0/docs/api/sqlite.html), [Resend API](https://resend.com/docs/api-reference/emails/send-email), [Railway Volumes](https://docs.railway.com/volumes), [Render Persistent Disks](https://render.com/docs/disks).
+참고: [Next.js 배포 출력](https://nextjs.org/docs/app/api-reference/config/next-config-js/output), [Node.js SQLite](https://nodejs.org/download/release/v22.13.0/docs/api/sqlite.html), [Brevo API](https://developers.brevo.com/reference/send-transac-email), [Railway Volumes](https://docs.railway.com/volumes), [Render Persistent Disks](https://render.com/docs/disks).

@@ -29,10 +29,12 @@ type LogRow = {
   claimed_at: string;
   created_at: string;
   sent_at: string | null;
+  attempts: number;
+  retryable: number;
 };
 type DeliveryClaim = Pick<LogRow, "id" | "schedule_id" | "recipient" | "subject" | "body">;
 export type NotificationResult = {
-  mode: "capture" | "resend";
+  mode: "capture" | "brevo";
   checked: number;
   sent: number;
   captured: number;
@@ -40,18 +42,30 @@ export type NotificationResult = {
   skipped: number;
 };
 
-function configuredMode(): "capture" | "resend" {
-  if (process.env.EMAIL_MODE && !["capture", "resend"].includes(process.env.EMAIL_MODE))
-    throw new HttpError(503, "EMAIL_MODE는 capture 또는 resend로 설정해주세요.");
+function configuredMode(): "capture" | "brevo" {
   const mode = emailMode();
   if (
-    mode === "resend" &&
-    (!process.env.RESEND_API_KEY || !process.env.EMAIL_FROM || !process.env.APP_URL)
+    mode === "brevo" &&
+    (!process.env.BREVO_API_KEY?.trim() || !process.env.EMAIL_FROM || !process.env.APP_URL)
   )
     throw new HttpError(
       503,
-      "이메일 발송 환경변수 RESEND_API_KEY, EMAIL_FROM, APP_URL을 설정해주세요.",
+      "이메일 발송 환경변수 BREVO_API_KEY, EMAIL_FROM, APP_URL을 설정해주세요.",
     );
+  if (mode === "brevo") {
+    if (
+      !/^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/.test(process.env.EMAIL_FROM!) ||
+      process.env.EMAIL_FROM!.length > 254
+    )
+      throw new HttpError(503, "EMAIL_FROM에는 인증된 발신 이메일 주소만 입력해주세요.");
+    const fromName = process.env.EMAIL_FROM_NAME?.trim() || "하루영양";
+    if (
+      fromName.length > 100 ||
+      /[\r\n]/.test(fromName) ||
+      /[\r\n]/.test(process.env.BREVO_API_KEY!)
+    )
+      throw new HttpError(503, "이메일 발신자 설정을 확인해주세요.");
+  }
   if (process.env.APP_URL) {
     try {
       if (!["http:", "https:"].includes(new URL(process.env.APP_URL).protocol)) throw new Error();
@@ -60,6 +74,83 @@ function configuredMode(): "capture" | "resend" {
     }
   }
   return mode;
+}
+
+type BrevoConfiguration = { apiKey: string; fromEmail: string; fromName: string };
+type BrevoOutcome =
+  | { status: "accepted"; messageId: string }
+  | { status: "rejected"; error: string }
+  | { status: "uncertain"; error: string };
+
+const uncertainDelivery =
+  "이메일 전송 결과를 확인할 수 없어 자동 재발송을 중단했습니다. Brevo 전송 기록을 확인해주세요.";
+
+function escapeHtml(value: string): string {
+  return value.replace(
+    /[&<>"']/g,
+    (character) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]!,
+  );
+}
+
+/**
+ * Brevo's UUID idempotency key belongs in the JSON body headers, not an HTTP
+ * Idempotency-Key header. Its deduplication TTL is bounded; an uncertain result
+ * therefore must NEVER be automatically replayed, even after worker restarts.
+ * https://developers.brevo.com/docs/heterogenous-versions-batch-emails
+ * API acceptance only means queued; inbox delivery must be verified separately.
+ */
+export async function sendBrevoEmail(
+  delivery: Pick<DeliveryClaim, "id" | "recipient" | "subject" | "body">,
+  configuration: BrevoConfiguration,
+): Promise<BrevoOutcome> {
+  try {
+    const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+      method: "POST",
+      redirect: "error",
+      signal: AbortSignal.timeout(10_000),
+      headers: {
+        "api-key": configuration.apiKey,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        sender: { email: configuration.fromEmail, name: configuration.fromName },
+        to: [{ email: delivery.recipient }],
+        subject: delivery.subject,
+        textContent: delivery.body,
+        htmlContent: `<html><body><div style="white-space:pre-wrap">${escapeHtml(delivery.body)}</div></body></html>`,
+        headers: { idempotencyKey: delivery.id },
+      }),
+    });
+    // Never persist raw provider bodies or exception messages: they may echo credentials.
+    const payload = (await response.json().catch(() => null)) as {
+      code?: unknown;
+      messageId?: unknown;
+    } | null;
+    if (
+      response.ok &&
+      typeof payload?.messageId === "string" &&
+      payload.messageId.trim() &&
+      payload.messageId.length <= 500
+    )
+      return { status: "accepted", messageId: payload.messageId };
+    if (
+      response.status >= 400 &&
+      response.status < 500 &&
+      ![408, 409].includes(response.status) &&
+      typeof payload?.code === "string" &&
+      payload.code.trim().length > 0 &&
+      payload.code !== "duplicate_parameter"
+    )
+      return {
+        status: "rejected",
+        error: `이메일 제공자가 요청을 거절했습니다 (HTTP ${response.status}). 발신자 인증·계정 한도·API 설정을 확인해주세요.`,
+      };
+    return { status: "uncertain", error: uncertainDelivery };
+  } catch {
+    return { status: "uncertain", error: uncertainDelivery };
+  }
 }
 
 function message(candidate: Candidate, channel: Channel, date: string, now: Date) {
@@ -99,20 +190,24 @@ function claim(
   return transaction((db) => {
     const existing = findLog(candidate, channel, date);
     if (existing && (existing.status === "sent" || existing.status === "captured")) return null;
-    if (
-      existing?.status === "processing" &&
-      now.getTime() - Date.parse(existing.claimed_at) < 15 * 60_000
-    )
+    if (existing?.status === "processing") {
+      if (now.getTime() - Date.parse(existing.claimed_at) >= 15 * 60_000)
+        db.prepare(
+          "UPDATE notification_logs SET status='failed',retryable=0,error=? WHERE id=?",
+        ).run(uncertainDelivery, existing.id);
       return null;
-    if (existing?.status === "failed" && now.getTime() - Date.parse(existing.claimed_at) < 60_000)
-      return null;
+    }
+    if (existing?.status === "failed") {
+      if (!existing.retryable || existing.attempts >= 3) return null;
+      if (now.getTime() - Date.parse(existing.claimed_at) < 60_000) return null;
+    }
     const stamp = now.toISOString();
     if (existing) {
-      // Preserve the original recipient/payload/key after an uncertain provider response.
+      // Preserve the original recipient/payload/key after a confirmed rejection.
       // A changed guardian address must not receive a replay intended for the old address.
       if (existing.recipient !== recipient) return null;
       db.prepare(
-        "UPDATE notification_logs SET status='processing',error=NULL,claimed_at=?,attempts=attempts+1 WHERE id=?",
+        "UPDATE notification_logs SET status='processing',error=NULL,retryable=0,claimed_at=?,attempts=attempts+1 WHERE id=?",
       ).run(stamp, existing.id);
       return existing;
     }
@@ -161,7 +256,7 @@ async function deliver(
   candidate: Candidate,
   channel: Channel,
   date: string,
-  mode: "capture" | "resend",
+  mode: "capture" | "brevo",
   now: Date,
 ): Promise<"sent" | "captured" | "failed" | "skipped"> {
   const recipient = channel === "user" ? candidate.email : candidate.guardian_email;
@@ -183,42 +278,26 @@ async function deliver(
     ).run(id);
     return "captured";
   }
-  try {
-    const response = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      signal: AbortSignal.timeout(10_000),
-      headers: {
-        Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
-        "Content-Type": "application/json",
-        "Idempotency-Key": `haru-${delivery.schedule_id}-${date}-${channel}`,
-      },
-      body: JSON.stringify({
-        from: process.env.EMAIL_FROM,
-        to: [delivery.recipient],
-        subject: delivery.subject,
-        text: delivery.body,
-      }),
-    });
-    if (!response.ok)
-      throw new Error(`이메일 제공자가 요청을 거절했습니다 (HTTP ${response.status}).`);
-    const payload = (await response.json()) as { id?: unknown };
-    if (typeof payload.id !== "string") throw new Error("이메일 제공자 응답을 확인할 수 없습니다.");
+  const outcome = await sendBrevoEmail(delivery, {
+    apiKey: process.env.BREVO_API_KEY!,
+    fromEmail: process.env.EMAIL_FROM!,
+    fromName: process.env.EMAIL_FROM_NAME?.trim() || "하루영양",
+  });
+  if (outcome.status === "accepted") {
     db.prepare(
       "UPDATE notification_logs SET status='sent',provider_id=?,sent_at=?,error=NULL WHERE id=?",
-    ).run(payload.id, now.toISOString(), id);
+    ).run(outcome.messageId, now.toISOString(), id);
     return "sent";
-  } catch (error) {
-    // Do not store provider response bodies or request headers, which can contain credentials.
-    const safeError =
-      error instanceof Error && error.message.startsWith("이메일 제공자")
-        ? error.message
-        : "이메일 요청에 실패했습니다. 네트워크 및 제공자 설정을 확인해주세요.";
-    db.prepare("UPDATE notification_logs SET status='failed',error=? WHERE id=?").run(
-      safeError,
-      id,
-    );
-    return "failed";
   }
+  db.prepare(
+    "UPDATE notification_logs SET status='failed',error=? || CASE WHEN ?=1 AND attempts>=3 THEN ' 재시도 한도(3회)에 도달해 자동 재발송을 중단했습니다.' ELSE '' END,retryable=CASE WHEN ?=1 AND attempts<3 THEN 1 ELSE 0 END WHERE id=?",
+  ).run(
+    outcome.error,
+    outcome.status === "rejected" ? 1 : 0,
+    outcome.status === "rejected" ? 1 : 0,
+    id,
+  );
+  return "failed";
 }
 
 /**

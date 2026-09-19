@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { getDb, getToday, HttpError, shiftDate, transaction } from "./db";
 import { validAge, validEmail, validName } from "./auth";
 import { normalizeIngredient } from "../domain";
+import type { EmailMode } from "../types";
 
 export type IngredientInput = { name: string; amount: number; unit: string };
 export type SupplementInput = {
@@ -359,8 +360,12 @@ export function setIntake(userId: string, raw: Record<string, unknown>) {
   });
 }
 
-export function emailMode(): "capture" | "resend" {
-  return process.env.EMAIL_MODE === "resend" ? "resend" : "capture";
+export function emailMode(): EmailMode {
+  const mode = process.env.EMAIL_MODE;
+  if (mode !== "capture" && mode !== "brevo") {
+    throw new HttpError(503, "EMAIL_MODE를 brevo 또는 capture로 명시적으로 설정해주세요.");
+  }
+  return mode;
 }
 export function settings(userId: string) {
   const row = getDb()

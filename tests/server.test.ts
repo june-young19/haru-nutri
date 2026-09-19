@@ -37,8 +37,9 @@ import { duplicateGroups } from "../lib/domain";
 const environmentKeys = [
   "DATABASE_PATH",
   "EMAIL_MODE",
-  "RESEND_API_KEY",
+  "BREVO_API_KEY",
   "EMAIL_FROM",
+  "EMAIL_FROM_NAME",
   "APP_URL",
   "CRON_SECRET",
   "TRUST_PROXY",
@@ -115,9 +116,9 @@ const input = (overrides: Record<string, unknown> = {}) => ({
 const at = (time: string) => new Date(`${getToday()}T${time}:00+09:00`);
 const later = (now: Date, minutes: number) => new Date(now.getTime() + minutes * 60_000);
 function liveMode() {
-  process.env.EMAIL_MODE = "resend";
-  process.env.RESEND_API_KEY = "test-only-key-never-send";
-  process.env.EMAIL_FROM = "Haru <noreply@example.com>";
+  process.env.EMAIL_MODE = "brevo";
+  process.env.BREVO_API_KEY = "test-only-key-never-send";
+  process.env.EMAIL_FROM = "noreply@example.com";
 }
 function guardian(userId: string) {
   return updateSettings(userId, {
@@ -135,6 +136,8 @@ function logRows() {
     sent_at: string | null;
     error: string | null;
     attempts: number;
+    retryable: number;
+    provider_id: string | null;
   }[];
 }
 
@@ -546,7 +549,7 @@ test("completing or archiving an item suppresses reminders and preview is scoped
 test("live email fails closed on missing configuration and cron requires its own secret", async () => {
   const { user, cookie } = await account();
   saveSupplement(user.id, input());
-  process.env.EMAIL_MODE = "resend";
+  process.env.EMAIL_MODE = "brevo";
   await assert.rejects(runNotifications({ now: at("10:00") }), { status: 503 });
   assert.equal(logRows().length, 0);
   assert.equal(
@@ -567,18 +570,22 @@ test("live email fails closed on missing configuration and cron requires its own
   );
 });
 
-test("Resend success uses stable idempotency and concurrent workers submit exactly once", async () => {
+test("Brevo success uses stable idempotency and concurrent workers submit exactly once", async () => {
   const { user } = await account();
-  const item = saveSupplement(user.id, input());
+  saveSupplement(user.id, input());
   guardian(user.id);
   liveMode();
-  const requests: { key: string; to: string[]; text: string }[] = [];
+  const requests: { key: string; to: { email: string }[]; textContent: string }[] = [];
   globalThis.fetch = async (url, options) => {
-    assert.equal(url, "https://api.resend.com/emails");
-    const payload = JSON.parse(String(options?.body)) as { to: string[]; text: string };
-    requests.push({ key: new Headers(options?.headers).get("idempotency-key")!, ...payload });
+    assert.equal(url, "https://api.brevo.com/v3/smtp/email");
+    const payload = JSON.parse(String(options?.body)) as {
+      to: { email: string }[];
+      textContent: string;
+      headers: { idempotencyKey: string };
+    };
+    requests.push({ key: payload.headers.idempotencyKey, ...payload });
     await new Promise((resolve) => setTimeout(resolve, 5));
-    return new Response(JSON.stringify({ id: `mock-${requests.length}` }), { status: 200 });
+    return new Response(JSON.stringify({ messageId: `mock-${requests.length}` }), { status: 200 });
   };
   const now = at("10:00");
   const results = await Promise.all(
@@ -589,27 +596,29 @@ test("Resend success uses stable idempotency and concurrent workers submit exact
     1,
   );
   assert.equal(requests.length, 1);
-  assert.equal(requests[0].key, `haru-${item.schedules[0].id}-${getToday()}-user`);
-  assert.deepEqual(requests[0].to, [user.email]);
+  assert.equal(requests[0].key, logRows()[0].id);
+  assert.deepEqual(requests[0].to, [{ email: user.email }]);
   assert.equal(logRows()[0].status, "sent");
   assert.ok(logRows()[0].sent_at);
   assert.equal((await runNotifications({ userId: user.id, now: later(now, 5) })).sent, 1);
-  assert.deepEqual(requests[1].to, ["guardian@example.com"]);
+  assert.deepEqual(requests[1].to, [{ email: "guardian@example.com" }]);
   assert.equal((await runNotifications({ userId: user.id, now: later(now, 10) })).sent, 0);
   assert.equal(requests.length, 2);
 });
 
-test("provider failures never become sent or trigger guardians; retry retains idempotency", async () => {
+test("explicit provider rejections never become sent or trigger guardians; retry retains idempotency", async () => {
   const { user } = await account();
   saveSupplement(user.id, input());
   guardian(user.id);
   liveMode();
   const keys: string[] = [];
   globalThis.fetch = async (_url, options) => {
-    keys.push(new Headers(options?.headers).get("idempotency-key")!);
+    keys.push(JSON.parse(String(options?.body)).headers.idempotencyKey as string);
     return keys.length === 1
-      ? new Response("private-provider-error", { status: 503 })
-      : new Response(JSON.stringify({ id: "retried-id" }), { status: 200 });
+      ? new Response(JSON.stringify({ code: "unauthorized", message: "private-provider-error" }), {
+          status: 401,
+        })
+      : new Response(JSON.stringify({ messageId: "retried-id" }), { status: 200 });
   };
   const now = at("10:00");
   assert.equal((await runNotifications({ userId: user.id, now })).failed, 1);
@@ -637,7 +646,7 @@ test("a capture is never upgraded to live sending or used to authorize a live gu
   let requests = 0;
   globalThis.fetch = async () => {
     requests += 1;
-    return new Response(JSON.stringify({ id: "should-not-send" }));
+    return new Response(JSON.stringify({ messageId: "should-not-send" }));
   };
   assert.equal((await runNotifications({ userId: user.id, now: later(now, 60) })).sent, 0);
   assert.equal(requests, 0);
@@ -645,7 +654,7 @@ test("a capture is never upgraded to live sending or used to authorize a live gu
   assert.equal(logRows()[0].status, "captured");
 });
 
-test("stale processing claims recover and disabling notifications suppresses all channels", async () => {
+test("stale processing claims stop without replay and disabling notifications suppresses all channels", async () => {
   const { user } = await account();
   saveSupplement(user.id, input());
   const now = at("10:00");
@@ -653,8 +662,11 @@ test("stale processing claims recover and disabling notifications suppresses all
   getDb()
     .prepare("UPDATE notification_logs SET status='processing',claimed_at=?")
     .run(later(now, -16).toISOString());
-  assert.equal((await runNotifications({ userId: user.id, now })).captured, 1);
-  assert.equal(logRows()[0].attempts, 2);
+  assert.equal((await runNotifications({ userId: user.id, now })).captured, 0);
+  assert.equal(logRows()[0].attempts, 1);
+  assert.equal(logRows()[0].status, "failed");
+  assert.equal(logRows()[0].retryable, 0);
+  assert.match(logRows()[0].error!, /자동 재발송을 중단/);
   saveSupplement(user.id, input({ name: "새 항목" }));
   guardian(user.id);
   updateSettings(user.id, { reminderEnabled: false });
@@ -662,7 +674,7 @@ test("stale processing claims recover and disabling notifications suppresses all
   assert.equal(logRows().length, 1);
 });
 
-test("malformed provider success is a failure and a later capture starts a fresh guardian delay", async () => {
+test("malformed provider success remains failed without a capture fallback or guardian escalation", async () => {
   const { user } = await account();
   saveSupplement(user.id, input());
   guardian(user.id);
@@ -675,7 +687,7 @@ test("malformed provider success is a failure and a later capture starts a fresh
   assert.equal(logRows()[0].sent_at, null);
   process.env.EMAIL_MODE = "capture";
   const captureTime = later(now, 30);
-  assert.equal((await runNotifications({ userId: user.id, now: captureTime })).captured, 1);
+  assert.equal((await runNotifications({ userId: user.id, now: captureTime })).captured, 0);
   assert.equal(logRows().length, 1, "an old failed attempt cannot start the guardian countdown");
   assert.equal(
     (await runNotifications({ userId: user.id, now: later(captureTime, 4) })).captured,
@@ -683,8 +695,10 @@ test("malformed provider success is a failure and a later capture starts a fresh
   );
   assert.equal(
     (await runNotifications({ userId: user.id, now: later(captureTime, 5) })).captured,
-    1,
+    0,
   );
+  assert.equal(logRows()[0].status, "failed");
+  assert.equal(logRows()[0].retryable, 0);
 });
 
 test("repeated saves and metadata changes cannot duplicate today's same-time reminders", async () => {
@@ -720,19 +734,19 @@ test("repeated saves and metadata changes cannot duplicate today's same-time rem
   assert.equal(logRows().filter((row) => row.channel === "guardian").length, 1);
 });
 
-test("an uncertain provider retry keeps its original key and payload after schedule replacement", async () => {
+test("an explicit rejection retry keeps its original key and payload after schedule replacement", async () => {
   const { user } = await account();
   const item = saveSupplement(user.id, input());
   liveMode();
   const requests: { key: string; body: string }[] = [];
   globalThis.fetch = async (_url, options) => {
     requests.push({
-      key: new Headers(options?.headers).get("idempotency-key")!,
+      key: JSON.parse(String(options?.body)).headers.idempotencyKey as string,
       body: String(options?.body),
     });
     if (requests.length === 1)
-      throw new Error("Connection lost after provider may have accepted request");
-    return new Response(JSON.stringify({ id: "same-provider-delivery" }), { status: 200 });
+      return new Response(JSON.stringify({ code: "unauthorized" }), { status: 401 });
+    return new Response(JSON.stringify({ messageId: "same-provider-delivery" }), { status: 200 });
   };
   const now = at("10:00");
   assert.equal((await runNotifications({ userId: user.id, now })).failed, 1);
@@ -741,7 +755,7 @@ test("an uncertain provider retry keeps its original key and payload after sched
   assert.equal((await runNotifications({ userId: user.id, now: later(now, 1) })).sent, 1);
   assert.equal(requests[0].key, requests[1].key);
   assert.equal(requests[0].body, requests[1].body);
-  assert.equal(requests[0].key, `haru-${item.schedules[0].id}-${getToday()}-user`);
+  assert.equal(requests[0].key, logRows()[0].id);
   saveSupplement(user.id, input({ name: "한번 더 저장" }), item.id);
   assert.equal((await runNotifications({ userId: user.id, now: later(now, 2) })).sent, 0);
   assert.equal(requests.length, 2);
@@ -760,7 +774,7 @@ test("editing an item during an in-flight send does not let another worker claim
   globalThis.fetch = async () => {
     requests += 1;
     await waiting;
-    return new Response(JSON.stringify({ id: "single-delivery" }), { status: 200 });
+    return new Response(JSON.stringify({ messageId: "single-delivery" }), { status: 200 });
   };
   const now = at("10:00");
   const first = runNotifications({ userId: user.id, now });
@@ -968,7 +982,7 @@ test("v1 nickname migration preserves accounts, sessions, supplements and stored
   const migrated = getDb();
   assert.equal(
     (migrated.prepare("PRAGMA user_version").get() as { user_version: number }).user_version,
-    2,
+    3,
   );
   const row = migrated
     .prepare("SELECT name,age,password_hash FROM users WHERE id=?")
@@ -1067,19 +1081,26 @@ test("legacy archived rows are filtered even if their schedules were never retir
 });
 
 test("archived products never send user or guardian reminders, including live mode and next day", async () => {
-  for (const mode of ["capture", "resend"] as const) {
+  for (const mode of ["capture", "brevo"] as const) {
     const { user } = await account(`${mode}@example.com`);
     const item = saveSupplement(user.id, input());
     guardian(user.id);
     process.env.EMAIL_MODE = mode;
-    const providerPayloads: { subject: string; text: string; to: string[] }[] = [];
-    if (mode === "resend") {
+    const providerPayloads: { subject: string; textContent: string; to: { email: string }[] }[] =
+      [];
+    if (mode === "brevo") {
       liveMode();
       globalThis.fetch = async (_url, options) => {
         providerPayloads.push(
-          JSON.parse(String(options?.body)) as { subject: string; text: string; to: string[] },
+          JSON.parse(String(options?.body)) as {
+            subject: string;
+            textContent: string;
+            to: { email: string }[];
+          },
         );
-        return new Response(JSON.stringify({ id: "mock-personal-notification" }), { status: 200 });
+        return new Response(JSON.stringify({ messageId: "mock-personal-notification" }), {
+          status: 200,
+        });
       };
     }
     const now = at("10:00");
@@ -1100,10 +1121,10 @@ test("archived products never send user or guardian reminders, including live mo
       1,
       "existing user log is retained and no guardian log is added",
     );
-    if (mode === "resend") {
+    if (mode === "brevo") {
       assert.equal(providerPayloads.length, 1);
       assert.equal(providerPayloads[0].subject, ownNotice.subject);
-      assert.equal(providerPayloads[0].text, ownNotice.body);
+      assert.equal(providerPayloads[0].textContent, ownNotice.body);
     }
   }
 });
@@ -1242,4 +1263,159 @@ test("guardian settings and notification history stay separate for accounts A an
   });
   assert.equal(settings(second.user.id).guardianEnabled, true);
   assert.equal(settings(second.user.id).guardianEmail, "guardian-b@example.com");
+});
+
+test("email mode must be explicit and invalid Brevo configuration creates no notification attempts", async () => {
+  const { user, cookie } = await account();
+  const product = saveSupplement(user.id, input());
+  for (const mode of [undefined, "", " ", "smtp", "BREVO", "brevo "]) {
+    if (mode === undefined) delete process.env.EMAIL_MODE;
+    else process.env.EMAIL_MODE = mode;
+    await assert.rejects(runNotifications({ userId: user.id, now: at("10:00") }), { status: 503 });
+  }
+  liveMode();
+  for (const from of [
+    "Haru <sender@example.test>",
+    "not-an-email",
+    "sender@example.test\r\nBcc:bad@example.test",
+  ]) {
+    process.env.EMAIL_FROM = from;
+    await assert.rejects(runNotifications({ userId: user.id, now: at("10:00") }), { status: 503 });
+  }
+  liveMode();
+  for (const fromName of ["x".repeat(101), "Haru\r\nInjected: value"]) {
+    process.env.EMAIL_FROM_NAME = fromName;
+    await assert.rejects(runNotifications({ userId: user.id, now: at("10:00") }), { status: 503 });
+  }
+  delete process.env.EMAIL_FROM_NAME;
+  delete process.env.BREVO_API_KEY;
+  assert.equal((await api("/me", { cookie })).response.status, 200);
+  assert.equal((await api("/settings", { cookie })).response.status, 200);
+  assert.equal((await api("/supplements", { cookie })).response.status, 200);
+  setIntake(user.id, { scheduleId: product.schedules[0].id, date: getToday(), completed: true });
+  assert.equal(
+    dashboard(user.id).completed,
+    1,
+    "missing email key never prevents intake management",
+  );
+  assert.equal(logRows().length, 0);
+});
+
+test("uncertain Brevo outcomes are not replayed after TTL, schedule changes or database reopening", async () => {
+  const cases = ["network", "server", "duplicate"] as const;
+  for (const failure of cases) {
+    const { user } = await account(`${failure}@example.test`);
+    const item = saveSupplement(user.id, input());
+    guardian(user.id);
+    liveMode();
+    let requests = 0;
+    globalThis.fetch = async () => {
+      requests++;
+      if (failure === "network") throw new Error("Connection lost after acceptance");
+      return new Response(
+        JSON.stringify({ code: failure === "duplicate" ? "duplicate_parameter" : "server_error" }),
+        {
+          status: failure === "duplicate" ? 400 : 503,
+        },
+      );
+    };
+    const now = at("10:00");
+    assert.equal((await runNotifications({ userId: user.id, now })).failed, 1);
+    saveSupplement(user.id, input({ name: "수정 후에도 같은 알림" }), item.id);
+    closeDatabase();
+    for (const minutes of [1, 16, 31, 120, 360]) {
+      const result = await runNotifications({ userId: user.id, now: later(now, minutes) });
+      assert.equal(result.sent, 0);
+      assert.equal(result.captured, 0);
+    }
+    assert.equal(requests, 1);
+    const rows = listNotifications(user.id) as {
+      status: string;
+      error: string;
+      providerId: string | null;
+    }[];
+    assert.equal(rows.length, 1, "no guardian alert can follow an uncertain user alert");
+    assert.equal(rows[0].status, "failed");
+    assert.match(rows[0].error, /자동 재발송을 중단/);
+  }
+});
+
+test("confirmed rejections have a three-attempt limit with one-minute backoff and stable payloads", async () => {
+  const { user } = await account();
+  saveSupplement(user.id, input());
+  guardian(user.id);
+  liveMode();
+  const requests: string[] = [];
+  globalThis.fetch = async (_url, options) => {
+    requests.push(String(options?.body));
+    return new Response(JSON.stringify({ code: "too_many_requests" }), { status: 429 });
+  };
+  const now = at("10:00");
+  for (const minutes of [0, 0.5, 1, 1.5, 2, 3, 31, 60])
+    await Promise.all(
+      Array.from({ length: 3 }, () =>
+        runNotifications({ userId: user.id, now: later(now, minutes) }),
+      ),
+    );
+  assert.equal(requests.length, 3);
+  assert.equal(new Set(requests).size, 1);
+  assert.equal(logRows().length, 1);
+  assert.equal(logRows()[0].attempts, 3);
+  assert.equal(logRows()[0].status, "failed");
+  assert.equal(logRows()[0].retryable, 0);
+  assert.equal(logRows()[0].provider_id, null);
+  assert.equal(logRows()[0].sent_at, null);
+});
+
+test("v2 migration preserves every notification field and never replays previous uncertain deliveries", async () => {
+  const { user, cookie } = await account();
+  saveSupplement(user.id, input({ times: ["07:00", "08:00", "09:00"] }));
+  const now = at("10:00");
+  await runNotifications({ userId: user.id, now });
+  const ids = logRows().map((row) => row.id);
+  getDb()
+    .prepare(
+      "UPDATE notification_logs SET status='sent',provider_id='previous-provider-id',sent_at=? WHERE id=?",
+    )
+    .run(now.toISOString(), ids[0]);
+  getDb()
+    .prepare("UPDATE notification_logs SET status='failed',error='previous failure' WHERE id=?")
+    .run(ids[1]);
+  getDb()
+    .prepare("UPDATE notification_logs SET status='processing',claimed_at=? WHERE id=?")
+    .run(later(now, -16).toISOString(), ids[2]);
+  getDb().exec("ALTER TABLE notification_logs DROP COLUMN retryable; PRAGMA user_version=2");
+  const oldRows = getDb().prepare("SELECT * FROM notification_logs ORDER BY id").all();
+  closeDatabase();
+  const db = getDb();
+  assert.equal(
+    (db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version,
+    3,
+  );
+  const migratedRows = db
+    .prepare("SELECT * FROM notification_logs ORDER BY id")
+    .all()
+    .map((row) => {
+      const copy = { ...row };
+      assert.equal(copy.retryable, 0);
+      delete copy.retryable;
+      return copy;
+    });
+  assert.deepEqual(
+    migratedRows,
+    oldRows.map((row) => ({ ...row })),
+  );
+  liveMode();
+  let requests = 0;
+  globalThis.fetch = async () => {
+    requests++;
+    return new Response(JSON.stringify({ messageId: "should-never-send" }));
+  };
+  await runNotifications({ userId: user.id, now });
+  await runNotifications({ userId: user.id, now: later(now, 60) });
+  assert.equal(requests, 0);
+  assert.equal(logRows().length, 3);
+  assert.equal(logRows().filter((row) => row.status === "sent").length, 1);
+  assert.equal((await api("/me", { cookie })).response.status, 200);
+  assert.equal(listSupplements(user.id).length, 1);
 });

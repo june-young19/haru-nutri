@@ -2119,10 +2119,10 @@ function SettingsForm({
               </label>
               <div className="alert info">
                 현재 알림 모드:{" "}
-                <strong>{data.emailMode === "resend" ? "이메일 발송" : "로컬 보관함"}</strong>
+                <strong>{data.emailMode === "brevo" ? "Brevo 이메일 발송" : "로컬 보관함"}</strong>
                 <br />
-                {data.emailMode === "resend"
-                  ? "설정된 발신 주소를 통해 안내 메일을 전송합니다."
+                {data.emailMode === "brevo"
+                  ? "Brevo에 등록한 발신 주소를 통해 안내 메일을 전송합니다."
                   : "외부 이메일을 보내지 않고 알림 보관함에 발송 내용을 기록합니다."}
               </div>
               <Link className="text-link" href="/notifications">
