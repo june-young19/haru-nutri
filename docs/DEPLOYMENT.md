@@ -2,6 +2,8 @@
 
 이 문서는 동일한 GitHub 저장소에서 **웹 서비스 1개 + 상시 알림 워커 1개**를 배포하는 절차입니다. SQLite는 웹 서비스의 영구 볼륨에만 저장합니다. 워커는 인증된 HTTP 요청으로 웹 서버의 알림 처리를 호출하므로 별도 DB나 공유 파일 시스템이 필요하지 않습니다.
 
+제품 검색·비밀번호 재설정 추가 작업의 기준 커밋은 `b1d6bfd`입니다. 아래의 기존 Brevo 배포·복용 알림 수신 기록은 새 제품 API·재설정 이메일의 운영 검증을 대신하지 않습니다. 이번 추가분의 배포·실제 키 검색·재설정 완료는 아직 확인 전이며 [검증 기록](VERIFICATION.md)에 따로 남깁니다.
+
 **실제 공개 서비스:** [하루영양 열기](https://haru-nutri-production.up.railway.app) · [GitHub 저장소](https://github.com/june-young19/haru-nutri) · [Brevo 버전 CI](https://github.com/june-young19/haru-nutri/actions/runs/35427479462)
 
 2026-09-19 Brevo 전환 커밋 `a711e5d9cbb04553d7dfff848cc0b407fbdd50db`의 표준 CI가 성공했고 Railway 웹 `haru-nutri`와 워커 `haru-reminders`에 배포해 ACTIVE 상태를 확인했습니다. 기존 `/app/data`의 500MB 영구 볼륨과 공개 URL을 유지했습니다. 재배포 후 기존 두 테스트 계정 데이터 보존과 새 두 계정의 가입·제품·성분 합산·복용·삭제 이력·보호자 정보 분리·로그아웃을 공개 HTTPS 검사 3개 그룹으로 확인했습니다. 15:54:41 KST에 웹을 실제 Restart한 뒤에도 세션·프로필·보호자 분리·활성 제품·삭제 제품 완료 기록이 유지되는 것을 확인했습니다.
@@ -72,21 +74,22 @@ Railway 볼륨은 root 소유로 마운트됩니다. 현재 Dockerfile은 기본
 
 ### 웹 서비스 Variables
 
-| 변수              | 값                                                                        |
-| ----------------- | ------------------------------------------------------------------------- |
-| `NODE_ENV`        | `production`                                                              |
-| `HOSTNAME`        | `0.0.0.0`                                                                 |
-| `PORT`            | `3000`                                                                    |
-| `DATABASE_PATH`   | `/app/data/haru.db`                                                       |
-| `RAILWAY_RUN_UID` | `0`                                                                       |
-| `APP_URL`         | Railway에서 발급한 `<실제 HTTPS 도메인>`; 경로와 쿼리 없이 입력           |
-| `CRON_SECRET`     | 새로 생성한 길고 무작위인 값, 최소 24자, 권장 32바이트 이상의 무작위 토큰 |
-| `EMAIL_MODE`      | 실제 운영은 `brevo`; 외부 전송 없는 별도 시연은 명시적으로 `capture`      |
-| `BREVO_API_KEY`   | Brevo API Key를 Variables 비밀값으로 입력. SMTP Key와 다름                |
-| `EMAIL_FROM`      | Brevo에 등록·확인한 단일 이메일 주소; 표시 이름이나 꺾쇠를 넣지 않음      |
-| `EMAIL_FROM_NAME` | `하루영양`                                                                |
+| 변수                  | 값                                                                        |
+| --------------------- | ------------------------------------------------------------------------- |
+| `NODE_ENV`            | `production`                                                              |
+| `HOSTNAME`            | `0.0.0.0`                                                                 |
+| `PORT`                | `3000`                                                                    |
+| `DATABASE_PATH`       | `/app/data/haru.db`                                                       |
+| `RAILWAY_RUN_UID`     | `0`                                                                       |
+| `APP_URL`             | Railway에서 발급한 `<실제 HTTPS 도메인>`; 경로와 쿼리 없이 입력           |
+| `CRON_SECRET`         | 새로 생성한 길고 무작위인 값, 최소 24자, 권장 32바이트 이상의 무작위 토큰 |
+| `EMAIL_MODE`          | 실제 운영은 `brevo`; 외부 전송 없는 별도 시연은 명시적으로 `capture`      |
+| `BREVO_API_KEY`       | Brevo API Key를 Variables 비밀값으로 입력. SMTP Key와 다름                |
+| `EMAIL_FROM`          | Brevo에 등록·확인한 단일 이메일 주소; 표시 이름이나 꺾쇠를 넣지 않음      |
+| `EMAIL_FROM_NAME`     | `하루영양`                                                                |
+| `FOOD_SAFETY_API_KEY` | I0030 활용 신청을 완료한 식품안전나라 인증키. 웹에만 비밀값으로 입력      |
 
-로컬 컴퓨터에 있는 `.env`를 GitHub에 올리지 않습니다. 운영용 값을 Railway에 직접 설정합니다. `CRON_SECRET`과 `BREVO_API_KEY`는 `NEXT_PUBLIC_` 변수로 만들지 않습니다. `EMAIL_MODE` 누락·오타, 키·발신자 누락은 알림 오류로 처리하며 캡처로 대체하지 않습니다.
+로컬 컴퓨터에 있는 `.env`를 GitHub에 올리지 않습니다. 운영용 값을 Railway에 직접 설정합니다. `CRON_SECRET`, `BREVO_API_KEY`, `FOOD_SAFETY_API_KEY`는 `NEXT_PUBLIC_` 변수로 만들지 않습니다. `EMAIL_MODE` 누락·오타, 키·발신자 누락은 알림 오류로 처리하며 캡처로 대체하지 않습니다.
 
 ### 워커 서비스 Variables
 
@@ -99,6 +102,17 @@ Railway 볼륨은 root 소유로 마운트됩니다. 현재 Dockerfile은 기본
 처음에는 워커가 공개 HTTPS 웹 주소로 호출하도록 설정하면 별도 사설 DNS나 포트 설정이 필요하지 않습니다. `APP_URL` 뒤에 `/api/cron/notifications`를 붙이지 않습니다. 워커가 경로를 붙이며, URL에 사용자명·비밀번호·쿼리·프래그먼트를 넣으면 시작을 거부합니다. 운영 환경에서는 `APP_URL`이 없을 때 localhost로 조용히 연결하지 않습니다.
 
 워커에는 `BREVO_API_KEY`, `EMAIL_FROM`, `EMAIL_FROM_NAME`, 영구 볼륨이 필요하지 않습니다. 모든 DB 판정과 이메일 발송은 웹 서비스에서 처리합니다. Railway의 변수 참조 기능으로 `CRON_SECRET`을 공유하는 경우에도 로그나 공개 문서에 실제 값을 출력하지 않습니다.
+
+제품 검색 키 `FOOD_SAFETY_API_KEY`도 웹에만 설정합니다. 비밀번호 재설정은 기존 Brevo 변수와 워커를 재사용하므로 별도 공급자·API Key·서비스가 필요하지 않습니다. 응답 후 전송 큐가 중단되면 기존 cron이 대기 요청을 회수합니다. 회원 정보·SQLite 경로·볼륨·공개 URL은 바꾸지 않습니다.
+
+### 제품 검색·비밀번호 재설정 버전 업데이트
+
+1. 기존 웹·워커와 영구 볼륨을 유지하고 배포 전 일관된 DB 백업을 만듭니다. 체크포인트 `b1d6bfd` 이후 변경을 검토합니다.
+2. 식품안전나라의 인증키 발급과 **I0030 활용 신청**을 완료하고 웹의 비밀 변수에 넣습니다. 키가 없으면 제품 검색만 설정 오류가 나며 수동 등록은 계속 사용할 수 있습니다. [제품 설정·호출 한도](PRODUCT_DATA.md)
+3. 같은 소스를 웹·워커에 배포합니다. 버전 4는 재설정 요청 테이블을 추가하며 기존 계정·제품·일정·이력을 지우지 않습니다.
+4. `/api/health`, 기존 계정 로그인·제품·완료 기록, 제품 검색→공식 정보 확인→편집→UL 확인→저장을 확인합니다. 관심 탐색은 최대 4개 제품명 검색어의 첫 100건씩이며 전수 검색이 아닙니다.
+5. 자신이 관리하는 별도 테스트 계정에서 비밀번호 찾기를 요청합니다. 202 응답은 접수일 뿐입니다. 실제 메일 수신→코드 확인→새 비밀번호 설정→구 비밀번호 실패·신 비밀번호 성공·기존 세션 무효화를 확인합니다. 실제 사용자 비밀번호는 본인이 직접 변경합니다.
+6. 웹 재시작 후 기존 데이터 보존과 복용 알림 워커를 다시 점검합니다. 공개 로그에 코드·비밀번호·키·개인 메일 주소를 남기지 않습니다.
 
 ## 6. 배포와 자동 알림 확인
 
@@ -159,6 +173,10 @@ SQLite는 WAL 파일을 함께 사용합니다. **실행 중 `haru.db` 한 파�
 | 워커는 실행되지만 `sent=0`        | `EMAIL_MODE`, 사용자 알림 동의, 미완료 여부, 지연 시간, 기존 처리 기록 확인       |
 | Brevo API 접수 후 메일이 안 보임  | Transactional Logs의 Delivered·Deferred·Blocked, 발송 한도, 실제 전체 메일함 확인 |
 | Brevo API 인증·IP 오류            | API Key/SMTP Key 구분, 계정 발송 허용, 확인한 Sender, Authorized IPs 확인         |
+| 제품 검색 503                     | 웹 `FOOD_SAFETY_API_KEY`, I0030 활용 신청·키 상태, 공식 API 응답; 직접 입력 사용  |
+| 제품 검색 429                     | 앱의 시간당 80회 외부 요청 예산. 캐시가 없는 연속 검색을 줄이고 이후 재시도       |
+| 재설정 요청 503                   | 실제 brevo 모드·필수 메일 설정 확인. capture에서는 인증코드 발송을 제공하지 않음  |
+| 재설정 요청 202인데 메일이 없음   | 202는 접수만 의미. 큐·워커·Brevo 전달 상태·올바른 수신함 확인, 60초 이후 재요청   |
 | 재시작을 반복하다 멈춤            | Trial On Failure 10회 한도 및 최초 설정 오류 확인                                 |
 
 ## 10. Render로 배포할 경우
