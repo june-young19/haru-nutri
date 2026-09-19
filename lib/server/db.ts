@@ -63,6 +63,18 @@ CREATE TABLE IF NOT EXISTS notification_logs (
  UNIQUE(schedule_id,date,channel)
 );
 CREATE INDEX IF NOT EXISTS notifications_user ON notification_logs(user_id,created_at);
+CREATE TABLE IF NOT EXISTS password_reset_requests (
+ id TEXT PRIMARY KEY, email_hash TEXT NOT NULL,
+ user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+ code_hash TEXT NOT NULL,
+ status TEXT NOT NULL CHECK(status IN ('queued','processing','sent','failed','verified','consumed','invalidated','expired')),
+ attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts BETWEEN 0 AND 5),
+ created_at TEXT NOT NULL, expires_at TEXT NOT NULL, claimed_at TEXT,
+ sent_at TEXT, provider_id TEXT, error TEXT, verified_at TEXT,
+ reset_token_hash TEXT UNIQUE, reset_expires_at TEXT, consumed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS resets_email ON password_reset_requests(email_hash,created_at);
+CREATE INDEX IF NOT EXISTS resets_pending ON password_reset_requests(status,created_at);
 `;
 
 let database: DatabaseSync | undefined;
@@ -81,7 +93,7 @@ export function getDb(): DatabaseSync {
   database.exec("BEGIN IMMEDIATE");
   try {
     const version = database.prepare("PRAGMA user_version").get() as { user_version: number };
-    if (version.user_version > 3)
+    if (version.user_version > 4)
       throw new Error("This database needs a newer version of Haru Nutri.");
     database.exec(schema);
     const columns = database.prepare("PRAGMA table_info(users)").all() as { name: string }[];
@@ -103,7 +115,8 @@ export function getDb(): DatabaseSync {
       database.exec(
         "ALTER TABLE notification_logs ADD COLUMN retryable INTEGER NOT NULL DEFAULT 0 CHECK(retryable IN (0,1))",
       );
-    database.exec("PRAGMA user_version = 3; COMMIT;");
+    // v4 only adds reset-specific tables/indexes; existing account data is untouched.
+    database.exec("PRAGMA user_version = 4; COMMIT;");
   } catch (error) {
     database.exec("ROLLBACK");
     database.close();

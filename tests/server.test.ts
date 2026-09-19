@@ -982,7 +982,7 @@ test("v1 nickname migration preserves accounts, sessions, supplements and stored
   const migrated = getDb();
   assert.equal(
     (migrated.prepare("PRAGMA user_version").get() as { user_version: number }).user_version,
-    3,
+    4,
   );
   const row = migrated
     .prepare("SELECT name,age,password_hash FROM users WHERE id=?")
@@ -1390,7 +1390,7 @@ test("v2 migration preserves every notification field and never replays previous
   const db = getDb();
   assert.equal(
     (db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version,
-    3,
+    4,
   );
   const migratedRows = db
     .prepare("SELECT * FROM notification_logs ORDER BY id")

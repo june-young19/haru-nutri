@@ -77,6 +77,18 @@ function configuredMode(): "capture" | "brevo" {
 }
 
 type BrevoConfiguration = { apiKey: string; fromEmail: string; fromName: string };
+export function getBrevoConfiguration(): BrevoConfiguration {
+  if (configuredMode() !== "brevo")
+    throw new HttpError(
+      503,
+      "현재 이메일 인증을 사용할 수 없습니다. 이메일 서비스 설정을 확인해주세요.",
+    );
+  return {
+    apiKey: process.env.BREVO_API_KEY!,
+    fromEmail: process.env.EMAIL_FROM!,
+    fromName: process.env.EMAIL_FROM_NAME?.trim() || "하루영양",
+  };
+}
 type BrevoOutcome =
   | { status: "accepted"; messageId: string }
   | { status: "rejected"; error: string }

@@ -31,7 +31,7 @@ export async function hashPassword(password: string): Promise<string> {
   const salt = randomBytes(16).toString("hex");
   return `${salt}:${(await derive(password, salt)).toString("hex")}`;
 }
-async function verifyPassword(password: string, hash: string): Promise<boolean> {
+export async function verifyPassword(password: string, hash: string): Promise<boolean> {
   const [salt, stored] = hash.split(":");
   if (!salt || !stored) return false;
   const expected = Buffer.from(stored, "hex");
@@ -64,7 +64,7 @@ export function validAge(value: unknown): number {
     throw new HttpError(400, "나이는 1~120 사이의 정수로 입력해주세요.");
   return value;
 }
-function passwordInput(value: unknown): string {
+export function passwordInput(value: unknown): string {
   if (typeof value !== "string" || value.length < 10 || value.length > 128)
     throw new HttpError(400, "비밀번호는 10~128자로 입력해주세요.");
   return value;
@@ -127,7 +127,14 @@ export async function login(
     row?.password_hash || `${"0".repeat(32)}:${"0".repeat(128)}`,
   );
   if (!row || !valid) throw new HttpError(401, "이메일 또는 비밀번호를 확인해주세요.");
-  return { user: publicUser(row), token: createSession(row.id) };
+  // A reset may have completed while scrypt was running. Never create a fresh
+  // session from a password hash that has since been replaced.
+  return transaction((db) => {
+    const current = db.prepare("SELECT * FROM users WHERE id=?").get(row.id) as UserRow | undefined;
+    if (!current || current.password_hash !== row.password_hash)
+      throw new HttpError(401, "이메일 또는 비밀번호를 확인해주세요.");
+    return { user: publicUser(current), token: createSession(current.id) };
+  });
 }
 
 function createSession(userId: string): string {

@@ -2,7 +2,18 @@ import { timingSafeEqual } from "node:crypto";
 import { checkOrigin, login, logout, rateLimit, requireUser, sessionCookie, signup } from "./auth";
 import { getDb, HttpError } from "./db";
 import { runNotifications } from "./notifications";
+import {
+  completePasswordReset,
+  passwordResetCookie,
+  passwordResetToken,
+  processPasswordResetRequests,
+  requestPasswordReset,
+  verifyPasswordReset,
+} from "./password-reset";
 import { analyzeSafety } from "../safety";
+import { normalizeIngredient, surveyResults } from "../domain";
+import { rankProducts } from "../product-ranking";
+import { candidateProducts, getProduct, searchProducts } from "./products";
 import {
   archiveSupplement,
   completeOnboarding,
@@ -96,7 +107,10 @@ function checkCron(request: Request) {
 }
 
 /** Web-standard Request/Response makes the real API directly integration-testable without a browser. */
-export async function handleApi(request: Request): Promise<Response> {
+export async function handleApi(
+  request: Request,
+  options: { scheduleResetDelivery?: (task: () => Promise<void>) => void } = {},
+): Promise<Response> {
   try {
     checkOrigin(request);
     const path = new URL(request.url).pathname.replace(/\/$/, "");
@@ -113,21 +127,91 @@ export async function handleApi(request: Request): Promise<Response> {
     }
     if (path === "/api/cron/notifications" && (method === "GET" || method === "POST")) {
       checkCron(request);
-      return json(await runNotifications());
+      // Queue recovery must not delay or suppress scheduled intake reminders.
+      const recovery = processPasswordResetRequests({ limit: 4 }).catch(() => {
+        console.error("[password-reset] Queue recovery failed.");
+      });
+      const reminders = await runNotifications();
+      await recovery;
+      return json(reminders);
+    }
+    if (path === "/api/auth/password-reset/request" && method === "POST") {
+      const result = await requestPasswordReset(await body(request), clientKey);
+      options.scheduleResetDelivery?.(async () => {
+        await processPasswordResetRequests({ requestId: result.requestId });
+      });
+      return json(result, 202, { "Set-Cookie": passwordResetCookie("") });
+    }
+    if (path === "/api/auth/password-reset/verify" && method === "POST") {
+      const result = await verifyPasswordReset(await body(request), clientKey);
+      return json({ verified: true, expiresIn: result.expiresIn }, 200, {
+        "Set-Cookie": passwordResetCookie(result.token),
+      });
+    }
+    if (path === "/api/auth/password-reset/complete" && method === "POST") {
+      const result = await completePasswordReset(
+        await body(request),
+        passwordResetToken(request),
+        clientKey,
+      );
+      const headers = new Headers();
+      headers.append("Set-Cookie", passwordResetCookie(""));
+      headers.append("Set-Cookie", sessionCookie(""));
+      return json(result, 200, headers);
     }
     if (path === "/api/auth/signup" && method === "POST") {
       const result = await signup(await body(request), clientKey);
-      return json({ user: result.user }, 201, { "Set-Cookie": sessionCookie(result.token) });
+      const headers = new Headers();
+      headers.append("Set-Cookie", sessionCookie(result.token));
+      headers.append("Set-Cookie", passwordResetCookie(""));
+      return json({ user: result.user }, 201, headers);
     }
     if (path === "/api/auth/login" && method === "POST") {
       const result = await login(await body(request), clientKey);
-      return json({ user: result.user }, 200, { "Set-Cookie": sessionCookie(result.token) });
+      const headers = new Headers();
+      headers.append("Set-Cookie", sessionCookie(result.token));
+      headers.append("Set-Cookie", passwordResetCookie(""));
+      return json({ user: result.user }, 200, headers);
     }
     if (path === "/api/auth/logout" && method === "POST") {
       logout(request);
-      return json({ loggedOut: true }, 200, { "Set-Cookie": sessionCookie("") });
+      const headers = new Headers();
+      headers.append("Set-Cookie", sessionCookie(""));
+      headers.append("Set-Cookie", passwordResetCookie(""));
+      return json({ loggedOut: true }, 200, headers);
     }
     const user = requireUser(request);
+    if (path.startsWith("/api/products") && method === "GET") {
+      rateLimit(`products-user:${user.id}`, 30, 60);
+      const query = new URL(request.url).searchParams;
+      if (path === "/api/products/search")
+        return json(await searchProducts(query.get("q") || "", Number(query.get("page") || "1")));
+      if (path === "/api/products/matches") {
+        const answers = getOnboarding(user.id).answers;
+        const allInterests = answers ? surveyResults(answers).map((result) => result.name) : [];
+        if (!allInterests.length)
+          throw new HttpError(400, "먼저 생활습관 설문에서 관심 성분을 확인해주세요.");
+        const selected = query.get("interest");
+        const interests = selected
+          ? allInterests.filter(
+              (name) => normalizeIngredient(name) === normalizeIngredient(selected),
+            )
+          : allInterests;
+        if (!interests.length)
+          throw new HttpError(400, "설문 결과에서 확인된 관심 성분을 선택해주세요.");
+        const candidates = await candidateProducts(interests);
+        return json({
+          ...rankProducts(candidates.products, interests, listSupplements(user.id), user.age),
+          interests,
+          source: candidates.source,
+          notice: candidates.notice,
+          total: candidates.total,
+          partial: candidates.partial,
+        });
+      }
+      const productMatch = path.match(/^\/api\/products\/(\d{6,30})$/);
+      if (productMatch) return json(await getProduct(productMatch[1]));
+    }
     if (path === "/api/me" && method === "GET")
       return json({ user, mode: "local", emailMode: emailMode() });
     if (path === "/api/safety" && method === "GET")
