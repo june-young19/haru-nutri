@@ -200,6 +200,10 @@ function claim(
 ): DeliveryClaim | null {
   const content = message(candidate, channel, date, now);
   return transaction((db) => {
+    // Candidates can wait behind other asynchronous deliveries. Recheck while
+    // holding the write lock so deletion/revocation cannot race this INSERT or
+    // revive an old retry. Keep the separate check immediately before sending.
+    if (!stillEligible(candidate, channel, date, recipient)) return null;
     const existing = findLog(candidate, channel, date);
     if (existing && (existing.status === "sent" || existing.status === "captured")) return null;
     if (existing?.status === "processing") {

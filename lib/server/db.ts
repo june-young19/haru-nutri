@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id);
 CREATE TABLE IF NOT EXISTS auth_attempts (
- bucket TEXT PRIMARY KEY, count INTEGER NOT NULL, expires_at INTEGER NOT NULL
+ bucket TEXT PRIMARY KEY, count INTEGER NOT NULL, expires_at INTEGER NOT NULL, owner_hash TEXT
 );
 CREATE TABLE IF NOT EXISTS supplements (
  id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -75,6 +75,13 @@ CREATE TABLE IF NOT EXISTS password_reset_requests (
 );
 CREATE INDEX IF NOT EXISTS resets_email ON password_reset_requests(email_hash,created_at);
 CREATE INDEX IF NOT EXISTS resets_pending ON password_reset_requests(status,created_at);
+CREATE TABLE IF NOT EXISTS account_deletion_grants (
+ token_hash TEXT PRIMARY KEY,
+ user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ session_hash TEXT NOT NULL UNIQUE REFERENCES sessions(token_hash) ON DELETE CASCADE,
+ password_version TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS deletion_grants_user ON account_deletion_grants(user_id);
 `;
 
 let database: DatabaseSync | undefined;
@@ -93,7 +100,7 @@ export function getDb(): DatabaseSync {
   database.exec("BEGIN IMMEDIATE");
   try {
     const version = database.prepare("PRAGMA user_version").get() as { user_version: number };
-    if (version.user_version > 4)
+    if (version.user_version > 5)
       throw new Error("This database needs a newer version of Haru Nutri.");
     database.exec(schema);
     const columns = database.prepare("PRAGMA table_info(users)").all() as { name: string }[];
@@ -115,8 +122,15 @@ export function getDb(): DatabaseSync {
       database.exec(
         "ALTER TABLE notification_logs ADD COLUMN retryable INTEGER NOT NULL DEFAULT 0 CHECK(retryable IN (0,1))",
       );
-    // v4 only adds reset-specific tables/indexes; existing account data is untouched.
-    database.exec("PRAGMA user_version = 4; COMMIT;");
+    const attemptColumns = database.prepare("PRAGMA table_info(auth_attempts)").all() as {
+      name: string;
+    }[];
+    // v5 adds short-lived deletion grants and owner hashes for erasing personal
+    // rate buckets. Existing mixed email/IP hashes cannot be reverse-mapped.
+    if (!attemptColumns.some((column) => column.name === "owner_hash"))
+      database.exec("ALTER TABLE auth_attempts ADD COLUMN owner_hash TEXT");
+    database.exec("CREATE INDEX IF NOT EXISTS attempts_owner ON auth_attempts(owner_hash)");
+    database.exec("PRAGMA user_version = 5; COMMIT;");
   } catch (error) {
     database.exec("ROLLBACK");
     database.close();

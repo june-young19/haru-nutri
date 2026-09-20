@@ -121,9 +121,10 @@ describe("password reset", () => {
     const setup = await grant();
     function cookies(response: Response) {
       const values = response.headers.getSetCookie();
-      assert.equal(values.length, 2);
+      assert.equal(values.length, 3);
       assert.match(values[0], /^haru_session=/);
       assert.equal(values[1], passwordResetCookie(""));
+      assert.match(values[2], /^haru_account_deletion=; Path=\/api\/account\/deletion;.*Max-Age=0/);
       assert.match(
         values[1],
         /Path=\/api\/auth\/password-reset; HttpOnly; SameSite=Lax; Max-Age=0/,
@@ -246,7 +247,7 @@ describe("password reset", () => {
     );
     assert.equal(completed.response.status, 200);
     assert.deepEqual(completed.json.data, { reset: true });
-    assert.equal(completed.response.headers.getSetCookie().length, 2);
+    assert.equal(completed.response.headers.getSetCookie().length, 3);
     assert.ok(
       completed.response.headers.getSetCookie().every((value) => value.includes("Max-Age=0")),
     );
@@ -573,12 +574,12 @@ describe("password reset", () => {
     assert.equal(resetRows().length, 0);
   });
 
-  test("v3 to v4 migration is additive and preserves existing users and sessions", async () => {
+  test("v3 migration is additive and preserves existing users and sessions", async () => {
     const owner = await account();
     const before = JSON.stringify(getDb().prepare("SELECT * FROM users").all());
     getDb().exec("DROP TABLE password_reset_requests; PRAGMA user_version=3");
     closeDatabase();
-    assert.equal(getDb().prepare("PRAGMA user_version").get()!.user_version, 4);
+    assert.equal(getDb().prepare("PRAGMA user_version").get()!.user_version, 5);
     assert.equal(JSON.stringify(getDb().prepare("SELECT * FROM users").all()), before);
     assert.equal(getSessionUser(owner.token)?.id, owner.user.id);
     assert.deepEqual(resetRows(), []);

@@ -71,7 +71,12 @@ export function passwordInput(value: unknown): string {
 }
 
 /** Persistent limits survive application restarts; buckets never store email/IP in cleartext. */
-export function rateLimit(bucket: string, limit: number, windowSeconds: number): void {
+export function rateLimit(
+  bucket: string,
+  limit: number,
+  windowSeconds: number,
+  owner?: string,
+): void {
   const now = Date.now();
   const key = digest(bucket);
   const allowed = transaction((db) => {
@@ -80,8 +85,8 @@ export function rateLimit(bucket: string, limit: number, windowSeconds: number):
       { count: number } | undefined;
     if (row && row.count >= limit) return false;
     db.prepare(
-      "INSERT INTO auth_attempts(bucket,count,expires_at) VALUES(?,1,?) ON CONFLICT(bucket) DO UPDATE SET count=count+1",
-    ).run(key, now + windowSeconds * 1000);
+      "INSERT INTO auth_attempts(bucket,count,expires_at,owner_hash) VALUES(?,1,?,?) ON CONFLICT(bucket) DO UPDATE SET count=count+1,owner_hash=COALESCE(excluded.owner_hash,auth_attempts.owner_hash)",
+    ).run(key, now + windowSeconds * 1000, owner ? digest(owner) : null);
     return true;
   });
   if (!allowed) throw new HttpError(429, "시도가 너무 많습니다. 잠시 후 다시 시도해주세요.");
@@ -116,8 +121,8 @@ export async function login(
 ): Promise<{ user: PublicUser; token: string }> {
   const email = validEmail(input.email);
   const password = passwordInput(input.password);
-  rateLimit(`login:${email}:${clientKey}`, 10, 900);
-  rateLimit(`login-account:${email}`, 20, 900);
+  rateLimit(`login:${email}:${clientKey}`, 10, 900, `email:${email}`);
+  rateLimit(`login-account:${email}`, 20, 900, `email:${email}`);
   rateLimit(`login-global:${clientKey}`, 100, 900);
   const row = getDb().prepare("SELECT * FROM users WHERE email=?").get(email) as
     UserRow | undefined;
@@ -150,7 +155,7 @@ function createSession(userId: string): string {
   );
   return token;
 }
-function requestToken(request: Request): string | undefined {
+export function requestToken(request: Request): string | undefined {
   return request.headers
     .get("cookie")
     ?.split(";")

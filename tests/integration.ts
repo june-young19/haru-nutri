@@ -87,12 +87,24 @@ class Client {
       options.status ?? 200,
       `${method} /api${path}: unexpected status ${response.status}`,
     );
-    const cookie = response.headers.get("set-cookie");
-    if (cookie) {
+    const jar = new Map(
+      this.cookie
+        .split("; ")
+        .filter(Boolean)
+        .map((entry) => {
+          const index = entry.indexOf("=");
+          return [entry.slice(0, index), entry.slice(index + 1)];
+        }),
+    );
+    for (const cookie of response.headers.getSetCookie()) {
       assert.match(cookie, /HttpOnly/i, "session cookie must be HttpOnly");
       assert.match(cookie, /SameSite=Lax/i, "session cookie must set SameSite");
-      this.cookie = cookie.split(";")[0];
+      const pair = cookie.split(";")[0];
+      const index = pair.indexOf("=");
+      if (/Max-Age=0(?:;|$)/i.test(cookie)) jar.delete(pair.slice(0, index));
+      else jar.set(pair.slice(0, index), pair.slice(index + 1));
     }
+    this.cookie = [...jar].map(([name, value]) => `${name}=${value}`).join("; ");
     assert.match(response.headers.get("cache-control") ?? "", /no-store/i);
     const payload = (await response.json()) as { data?: T; error?: string };
     if (response.ok) {
@@ -180,6 +192,7 @@ async function suite(databasePath: string): Promise<void> {
     "/history",
     "/settings",
     "/settings/guardian",
+    "/settings/delete-account",
   ];
   for (const path of ["/", "/login", "/signup"]) await assertPage(path, 200);
   for (const path of protectedPages) await assertPage(path, 307);
@@ -658,6 +671,93 @@ async function suite(databasePath: string): Promise<void> {
     writableDatabase.close();
   }
   const finalCookie = first.cookie;
+  const doomed = new Client();
+  const replay = new Client();
+  const deletionEmail = `deletion-${suffix}@example.test`;
+  const doomedUser = await doomed.request<{ user: User }>("/auth/signup", {
+    method: "POST",
+    status: 201,
+    body: { email: deletionEmail, password, name: "탈퇴 전용 검사", age: 25 },
+  });
+  await replay.request("/auth/login", { method: "POST", body: { email: deletionEmail, password } });
+  await doomed.request("/onboarding", {
+    method: "POST",
+    body: { choice: "survey", answers: [2, 2, 2, 2, 0, 1, 1] },
+  });
+  const doomedProduct = await doomed.request<Supplement>("/supplements", {
+    method: "POST",
+    status: 201,
+    body: multiInput,
+  });
+  const doomedDay = await doomed.request<Dashboard>("/dashboard");
+  await doomed.request("/intakes", {
+    method: "PUT",
+    body: {
+      scheduleId: doomedProduct.schedules[0].id,
+      date: doomedDay.date,
+      completed: true,
+    },
+  });
+  await doomed.request("/settings", {
+    method: "PATCH",
+    body: {
+      guardianEmail: "deletion-guardian@example.test",
+      guardianEnabled: true,
+      guardianConsent: true,
+    },
+  });
+  await anonymous.request("/account/deletion/verify", {
+    method: "POST",
+    body: { password },
+    status: 401,
+  });
+  await doomed.request("/account/deletion/verify", {
+    method: "POST",
+    body: { password: "Incorrect-password-2026!" },
+    status: 400,
+  });
+  await doomed.request("/me");
+  await doomed.request("/account/deletion/verify", { method: "POST", body: { password } });
+  await doomed.request("/account/deletion/complete", {
+    method: "POST",
+    body: { confirmed: false },
+    status: 400,
+  });
+  await doomed.request("/account/deletion/complete", {
+    method: "POST",
+    body: { confirmed: true, user_id: signup.user.id },
+  });
+  assert.equal(doomed.cookie, "", "all authentication cookies must be cleared");
+  await replay.request("/me", { status: 401 });
+  for (const page of [
+    "/dashboard",
+    "/settings",
+    "/supplements",
+    "/history",
+    "/settings/delete-account",
+  ])
+    await assertPage(page, 307, replay.cookie);
+  await doomed.request("/auth/login", {
+    method: "POST",
+    body: { email: deletionEmail, password },
+    status: 401,
+  });
+  assert.equal((await first.request<{ user: User }>("/me")).user.id, signup.user.id);
+  const reborn = await doomed.request<{ user: User }>("/auth/signup", {
+    method: "POST",
+    status: 201,
+    body: { email: deletionEmail, password, name: "새 계정", age: 25 },
+  });
+  assert.notEqual(reborn.user.id, doomedUser.user.id);
+  assert.equal(reborn.user.onboarded, false);
+  assert.deepEqual(await doomed.request("/supplements"), []);
+  const cleanHistory = await doomed.request<{ days: DayHistory[] }>("/history");
+  assert.equal(cleanHistory.days.flatMap((day) => day.items).length, 0);
+  assert.equal((await doomed.request<Settings>("/settings")).guardianEmail, "");
+  await doomed.request("/auth/logout", { method: "POST", body: {} });
+  console.log(
+    "PASS password-confirmed account deletion, all-session revocation, protected page redirects, cross-user isolation and fresh same-email signup",
+  );
   await first.request("/auth/logout", { method: "POST", body: {} });
   for (const path of ["/dashboard", "/settings", "/settings/guardian"])
     await assertPage(path, 307, finalCookie);

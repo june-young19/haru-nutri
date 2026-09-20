@@ -237,10 +237,10 @@ export async function verifyPasswordReset(
     if (!row) return false;
     const verifiedNow = options.now || new Date();
     const verifiedStamp = verifiedNow.toISOString();
-    const current = db
-      .prepare("SELECT * FROM password_reset_requests WHERE id=?")
-      .get(id) as ResetRow;
+    const current = db.prepare("SELECT * FROM password_reset_requests WHERE id=?").get(id) as
+      ResetRow | undefined;
     if (
+      !current ||
       current.status !== "sent" ||
       current.expires_at <= verifiedStamp ||
       current.code_hash !== row.code_hash

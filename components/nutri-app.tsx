@@ -37,6 +37,7 @@ import type { Dashboard, DayHistory, Settings, Supplement, TodayItem, User } fro
 import type { SafetyAnalysis } from "@/lib/safety";
 import { SafetyResults } from "./safety-results";
 import { PasswordReset } from "./password-reset";
+import { AccountDangerZone, AccountDeletion } from "./account-deletion";
 import { ProductDetails, ProductMatches, ProductSearch } from "./product-search";
 import type { Product } from "@/lib/products";
 
@@ -444,6 +445,13 @@ export default function NutriApp() {
   else if (/^\/supplements\/[^/]+$/.test(path)) page = <SupplementEditor id={path.split("/")[2]} />;
   else if (path === "/duplicates") page = <DuplicatesPage />;
   else if (path === "/history") page = <HistoryPage />;
+  else if (path === "/settings/delete-account")
+    page = (
+      <AccountDeletion
+        request={api}
+        onDeleted={() => replaceSessionView("/login?deleted=success", true)}
+      />
+    );
   else if (path === "/settings" || path === "/settings/guardian")
     page = (
       <SettingsPage
@@ -695,9 +703,13 @@ function AuthPage({ signup, onSuccess }: { signup: boolean; onSuccess: (user: Us
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [resetComplete, setResetComplete] = useState(false);
+  const [deletionComplete, setDeletionComplete] = useState(false);
   useEffect(() => {
     setResetComplete(
       !signup && new URLSearchParams(window.location.search).get("reset") === "success",
+    );
+    setDeletionComplete(
+      !signup && new URLSearchParams(window.location.search).get("deleted") === "success",
     );
   }, [signup]);
   async function submit(e: FormEvent<HTMLFormElement>) {
@@ -760,6 +772,11 @@ function AuthPage({ signup, onSuccess }: { signup: boolean; onSuccess: (user: Us
           </p>
           <form onSubmit={submit}>
             <ErrorBox error={error} />
+            {deletionComplete && (
+              <div className="notice" role="status">
+                회원 탈퇴가 완료되었습니다. 계정과 저장된 하루영양 데이터가 삭제되었습니다.
+              </div>
+            )}
             {resetComplete && (
               <div className="notice" role="status">
                 비밀번호를 재설정했습니다. 새 비밀번호로 로그인해 주세요.
@@ -2358,6 +2375,7 @@ function SettingsForm({
           </button>
         </div>
       </form>
+      {!guardian && <AccountDangerZone />}
     </div>
   );
 }

@@ -3109,6 +3109,94 @@ html[data-haru-session-pending="true"] .app-shell {
   color: var(--blue);
   font-weight: 700;
 }
+.account-danger-zone {
+  margin-top: 36px;
+  padding: 25px;
+  border: 1px solid #e9d9d6;
+}
+.deletion-eyebrow {
+  color: #8b5952;
+  font-size: 12px;
+  font-weight: 600;
+}
+.account-danger-zone h2 {
+  margin: 10px 0;
+  font-size: 19px;
+}
+.account-danger-zone p,
+.deletion-description {
+  color: #65758b;
+  font-size: 14px;
+  line-height: 1.8;
+  margin: 0 0 20px;
+}
+.button.deletion-outline {
+  border: 1px solid #d8b5ae;
+  color: #964b40;
+  background: #fff;
+}
+.button.deletion-submit {
+  background: #a84f43;
+  color: #fff;
+}
+.button.deletion-submit:hover:not(:disabled) {
+  background: #8f4035;
+}
+.deletion-steps {
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  list-style: none;
+  padding: 0;
+  margin: 24px 0;
+  color: #7e8998;
+  font-size: 13px;
+}
+.deletion-steps [aria-current="step"] {
+  color: #8e5148;
+  font-weight: 700;
+}
+.deletion-card h2 {
+  line-height: 1.6;
+}
+.deletion-card h2:focus {
+  outline: none;
+}
+.deletion-data-list {
+  padding-left: 20px;
+  color: #54657b;
+  line-height: 1.9;
+  font-size: 14px;
+  margin: 20px 0;
+}
+.deletion-data-list li {
+  margin-bottom: 8px;
+}
+.deletion-warning {
+  padding: 17px;
+  border-radius: 10px;
+  background: #fbf2ef;
+  color: #855249;
+  font-size: 14px;
+  line-height: 1.8;
+  margin: 20px 0;
+}
+.deletion-confirm {
+  margin-top: 22px;
+}
+@media (max-width: 480px) {
+  .account-danger-zone,
+  .deletion-card {
+    padding: 20px 16px;
+  }
+  .deletion-steps {
+    font-size: 11px;
+    gap: 6px;
+  }
+  .deletion-card h2 {
+    font-size: 18px;
+  }
+}
 .reset-code {
   letter-spacing: 0.18em;
   font-variant-numeric: tabular-nums;

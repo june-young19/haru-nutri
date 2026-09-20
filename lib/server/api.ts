@@ -1,6 +1,12 @@
 import { timingSafeEqual } from "node:crypto";
 import { checkOrigin, login, logout, rateLimit, requireUser, sessionCookie, signup } from "./auth";
 import { getDb, HttpError } from "./db";
+import {
+  accountDeletionCookie,
+  cancelAccountDeletion,
+  completeAccountDeletion,
+  verifyAccountDeletion,
+} from "./account-deletion";
 import { runNotifications } from "./notifications";
 import {
   completePasswordReset,
@@ -157,6 +163,7 @@ export async function handleApi(
       const headers = new Headers();
       headers.append("Set-Cookie", passwordResetCookie(""));
       headers.append("Set-Cookie", sessionCookie(""));
+      headers.append("Set-Cookie", accountDeletionCookie(""));
       return json(result, 200, headers);
     }
     if (path === "/api/auth/signup" && method === "POST") {
@@ -164,6 +171,7 @@ export async function handleApi(
       const headers = new Headers();
       headers.append("Set-Cookie", sessionCookie(result.token));
       headers.append("Set-Cookie", passwordResetCookie(""));
+      headers.append("Set-Cookie", accountDeletionCookie(""));
       return json({ user: result.user }, 201, headers);
     }
     if (path === "/api/auth/login" && method === "POST") {
@@ -171,6 +179,7 @@ export async function handleApi(
       const headers = new Headers();
       headers.append("Set-Cookie", sessionCookie(result.token));
       headers.append("Set-Cookie", passwordResetCookie(""));
+      headers.append("Set-Cookie", accountDeletionCookie(""));
       return json({ user: result.user }, 200, headers);
     }
     if (path === "/api/auth/logout" && method === "POST") {
@@ -178,11 +187,30 @@ export async function handleApi(
       const headers = new Headers();
       headers.append("Set-Cookie", sessionCookie(""));
       headers.append("Set-Cookie", passwordResetCookie(""));
+      headers.append("Set-Cookie", accountDeletionCookie(""));
       return json({ loggedOut: true }, 200, headers);
     }
     const user = requireUser(request);
+    if (path === "/api/account/deletion/verify" && method === "POST") {
+      const result = await verifyAccountDeletion(request, await body(request), clientKey);
+      return json({ verified: true, expiresIn: result.expiresIn }, 200, {
+        "Set-Cookie": accountDeletionCookie(result.token),
+      });
+    }
+    if (path === "/api/account/deletion/complete" && method === "POST") {
+      const result = completeAccountDeletion(request, await body(request), clientKey);
+      const headers = new Headers();
+      headers.append("Set-Cookie", sessionCookie(""));
+      headers.append("Set-Cookie", passwordResetCookie(""));
+      headers.append("Set-Cookie", accountDeletionCookie(""));
+      return json(result, 200, headers);
+    }
+    if (path === "/api/account/deletion/cancel" && method === "POST") {
+      const result = cancelAccountDeletion(request);
+      return json(result, 200, { "Set-Cookie": accountDeletionCookie("") });
+    }
     if (path.startsWith("/api/products") && method === "GET") {
-      rateLimit(`products-user:${user.id}`, 30, 60);
+      rateLimit(`products-user:${user.id}`, 30, 60, `user:${user.id}`);
       const query = new URL(request.url).searchParams;
       if (path === "/api/products/search")
         return json(await searchProducts(query.get("q") || "", Number(query.get("page") || "1")));
@@ -252,7 +280,7 @@ export async function handleApi(
     if (path === "/api/onboarding" && method === "GET") return json(getOnboarding(user.id));
     if (path === "/api/notifications" && method === "GET") return json(listNotifications(user.id));
     if (path === "/api/notifications/preview" && method === "POST") {
-      rateLimit(`notification-preview:${user.id}`, 12, 60);
+      rateLimit(`notification-preview:${user.id}`, 12, 60, `user:${user.id}`);
       return json(await runNotifications({ userId: user.id }));
     }
     throw new HttpError(404, "요청한 API를 찾을 수 없습니다.");
