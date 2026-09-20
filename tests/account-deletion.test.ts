@@ -39,6 +39,12 @@ const password = "deletion-test-password-123";
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 const future = (now: Date, seconds: number) => new Date(now.getTime() + seconds * 1000);
 type Account = Awaited<ReturnType<typeof signup>>;
+function assertHttpRejection(result: PromiseSettledResult<unknown>, status: number) {
+  assert.equal(result.status, "rejected");
+  if (result.status !== "rejected") assert.fail("Expected the concurrent request to reject");
+  assert.ok(result.reason instanceof HttpError);
+  assert.equal(result.reason.status, status);
+}
 
 describe("account deletion", () => {
   let directory: string;
@@ -531,7 +537,7 @@ describe("account deletion", () => {
   test("cancel invalidates verification already awaiting scrypt and cannot be undone by its late response", async () => {
     const owner = await account();
     const previous = await authorize(owner);
-    const pending = authorize(owner);
+    const pending = Promise.allSettled([authorize(owner)]);
     const reserved = getDb().prepare("SELECT password_version FROM account_deletion_grants").get()!;
     assert.equal(reserved.password_version, "");
     assert.throws(
@@ -539,10 +545,7 @@ describe("account deletion", () => {
       (error: unknown) => error instanceof HttpError && error.status === 400,
     );
     assert.deepEqual(cancelAccountDeletion(request(owner.token)), { cancelled: true });
-    await assert.rejects(
-      pending,
-      (error: unknown) => error instanceof HttpError && error.status === 400,
-    );
+    assertHttpRejection((await pending)[0], 400);
     assert.deepEqual(getDb().prepare("SELECT * FROM account_deletion_grants").all(), []);
     assert.throws(
       () => erase(owner, previous.token),
@@ -578,12 +581,9 @@ describe("account deletion", () => {
 
   test("logout during password verification prevents a grant and password changes invalidate verified grants", async () => {
     const owner = await account();
-    const pending = authorize(owner);
+    const pending = Promise.allSettled([authorize(owner)]);
     logout(request(owner.token));
-    await assert.rejects(
-      pending,
-      (error: unknown) => error instanceof HttpError && error.status === 401,
-    );
+    assertHttpRejection((await pending)[0], 401);
     assert.deepEqual(getDb().prepare("SELECT * FROM account_deletion_grants").all(), []);
     const current = await login({ email: owner.user.email, password }, randomUUID());
     const grant = await authorize(current);
@@ -599,19 +599,19 @@ describe("account deletion", () => {
   test("a password change during verification is rechecked after scrypt before minting a grant", async () => {
     const owner = await account();
     const replacement = await hashPassword("changed-password-456");
-    const pending = authorize(owner);
+    const pending = Promise.allSettled([authorize(owner)]);
     getDb().prepare("UPDATE users SET password_hash=? WHERE id=?").run(replacement, owner.user.id);
-    await assert.rejects(
-      pending,
-      (error: unknown) => error instanceof HttpError && error.status === 400,
-    );
+    assertHttpRejection((await pending)[0], 400);
     assert.deepEqual(getDb().prepare("SELECT * FROM account_deletion_grants").all(), []);
   });
 
   test("concurrent completion is single-use and an old-password login cannot revive a deleted account", async () => {
     const owner = await account();
     const verified = await authorize(owner);
-    const pendingLogin = login({ email: owner.user.email, password }, "racing-login");
+    // Observe rejection before waiting for deletion; scrypt can finish in either order.
+    const pendingLogin = Promise.allSettled([
+      login({ email: owner.user.email, password }, "racing-login"),
+    ]);
     const deleted = await Promise.all([
       api(
         "/account/deletion/complete",
@@ -625,10 +625,7 @@ describe("account deletion", () => {
       ),
     ]);
     assert.deepEqual(deleted.map((result) => result.response.status).sort(), [200, 401]);
-    await assert.rejects(
-      pendingLogin,
-      (error: unknown) => error instanceof HttpError && error.status === 401,
-    );
+    assertHttpRejection((await pendingLogin)[0], 401);
     assert.deepEqual(getDb().prepare("SELECT * FROM users").all(), []);
     assert.deepEqual(getDb().prepare("SELECT * FROM sessions").all(), []);
   });
@@ -647,24 +644,20 @@ describe("account deletion", () => {
       )
       .run(digest(resetToken), future(new Date(), 300).toISOString(), grantedReset);
     const verified = await authorize(owner);
-    const pendingVerify = verifyPasswordReset(
-      { email: owner.user.email, requestId: id, code },
-      randomUUID(),
-    );
-    const pendingComplete = completePasswordReset(
-      { password: "new-password-456", passwordConfirm: "new-password-456" },
-      resetToken,
-      randomUUID(),
-    );
+    // Attach both rejection handlers in the same turn. Sequential assert.rejects
+    // awaits leave the second request unobserved if its scrypt finishes first.
+    const pendingResets = Promise.allSettled([
+      verifyPasswordReset({ email: owner.user.email, requestId: id, code }, randomUUID()),
+      completePasswordReset(
+        { password: "new-password-456", passwordConfirm: "new-password-456" },
+        resetToken,
+        randomUUID(),
+      ),
+    ]);
     erase(owner, verified.token);
-    await assert.rejects(
-      pendingVerify,
-      (error: unknown) => error instanceof HttpError && error.status === 400,
-    );
-    await assert.rejects(
-      pendingComplete,
-      (error: unknown) => error instanceof HttpError && error.status === 400,
-    );
+    const [verification, replacement] = await pendingResets;
+    assertHttpRejection(verification, 400);
+    assertHttpRejection(replacement, 400);
     assert.deepEqual(getDb().prepare("SELECT * FROM password_reset_requests").all(), []);
     assert.deepEqual(getDb().prepare("SELECT * FROM users").all(), []);
   });
